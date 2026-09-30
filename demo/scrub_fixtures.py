@@ -16,7 +16,7 @@ import pathlib
 import re
 import sys
 
-cfg = json.loads((pathlib.Path(__file__).parent / "anon-fixtures.json").read_text())
+cfg = json.loads((pathlib.Path(__file__).parent / "anon-map.json").read_text())
 NAMES, EXACT = cfg["names"], cfg["exact"]
 name_pat = re.compile(r"\b(" + "|".join(sorted(map(re.escape, NAMES), key=len, reverse=True)) + r")\b")
 

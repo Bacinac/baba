@@ -70,7 +70,7 @@ demo/stills/
 demo/regions.json
 
 # BABA demo instance data — real name map + recorded fixtures (never public)
-demo/anon-fixtures.json
+demo/anon-map.json
 demo/api-fixtures.json
 demo/api-fixtures*.json
 

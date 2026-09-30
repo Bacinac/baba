@@ -7,10 +7,10 @@
 # every pixel a visitor sees is anonymised. Drill-in video (stream.mp4) needs the
 # blurred loop clips (added separately); until then it falls back to the poster.
 #
-#   web/build-demo.sh <anon-fixtures.json> [out-dir] [stills-dir]
+#   web/build-demo.sh <scrubbed-fixtures.json> [out-dir] [stills-dir]
 set -euo pipefail
 
-FIXTURES="${1:?usage: build-demo.sh <anon-fixtures.json> [out-dir] [stills-dir]}"
+FIXTURES="${1:?usage: build-demo.sh <scrubbed-fixtures.json> [out-dir] [stills-dir]}"
 WEB="$(cd "$(dirname "$0")" && pwd)"
 OUT="${2:-$WEB/demo-dist}"
 STILLS="${3:-$WEB/../demo/stills}"

@@ -13,7 +13,7 @@ import pathlib
 import re
 import sys
 
-cfg = json.loads((pathlib.Path(__file__).parent / "anon-fixtures.json").read_text())
+cfg = json.loads((pathlib.Path(__file__).parent / "anon-map.json").read_text())
 REAL_NAMES = list(cfg["names"]) + [k for k in cfg["exact"] if not re.search(r"\d", k)]
 # Real literals (real plate, real possessive forms) that must NOT survive — a
 # FAKE plate on a demo vehicle identity is legitimate, only the real one is not.
@@ -65,6 +65,10 @@ def check_value(where, v):
 def walk(node, where):
     if isinstance(node, dict):
         for k, v in node.items():
+            # a key is data too: a map keyed by person or plate carries them
+            # there and nowhere else
+            if isinstance(k, str):
+                check_value(f"{where}.{k}", k)
             plates = v if isinstance(v, list) else [v]
             if isinstance(k, str) and PLATE_KEY.match(k):
                 for p in plates:
