@@ -36,8 +36,16 @@ TAG="v$VERSION"
     || die "origin has no tag $TAG on ${SHA:0:8} — deploy/publish.sh tags the commit when it pushes the images"
 gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 && die "release $TAG already exists"
 
-# Everything below is asked anonymously, as the stranger running install.sh would.
-public_commit() { curl -fsS -o /dev/null "https://api.github.com/repos/$1/commits/$2"; }
+# Everything below is asked anonymously, as the stranger running install.sh would;
+# commits over git: the anonymous REST API allows 60 requests an hour per address,
+# which a dry run and a release from one network already spend.
+PROBE=$(mktemp -d)
+trap 'rm -rf "$PROBE"' EXIT
+git init -q --bare "$PROBE"
+public_commit() {
+    GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 GIT_TERMINAL_PROMPT=0 \
+        git -C "$PROBE" fetch -q --depth=1 --filter=blob:none --no-tags "https://github.com/$1.git" "$2" 2>/dev/null
+}
 public_commit "$REPO" "$SHA" || die "$REPO@${SHA:0:8} is not publicly readable"
 while read -r key url; do
     name=${key#submodule.}; name=${name%.url}
