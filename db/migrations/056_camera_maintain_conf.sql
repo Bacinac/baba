@@ -1,0 +1,22 @@
+-- Per-camera maintain-confidence floor.
+--
+-- Two-threshold tracking: a detection births a NEW track only at the per-camera
+-- birth threshold (`camera_detection_rules.min_confidence`, e.g. person 0.55),
+-- but an EXISTING track is kept alive down to a lower MAINTAIN floor so a
+-- settled object (seated person, parked car) doesn't blink out as its per-frame
+-- score decays. That floor was a single GLOBAL env (BABA_DETECTOR_MAINTAIN_CONF
+-- = 0.30) — the same for every camera and every lighting condition.
+--
+-- Under night IR a still person legitimately scores well below 0.30, so the
+-- global floor drops the weak-but-real detections and the track dies in the
+-- gaps → occupancy flaps. Make the floor per-camera so the light-profile system
+-- (camera_setting_profiles) can carry a LOWER value for the ir/dark bands and
+-- auto-apply it when the measured light drops — recovering the weak night
+-- detections that keep the track (and its presence) alive, without loosening
+-- the BIRTH threshold (no new false tracks).
+--
+-- NOT NULL with a concrete default: every camera carries its own value, the
+-- detector reads it directly, and there is NO global-env fallback path. The
+-- old global BABA_DETECTOR_MAINTAIN_CONF is retired.
+ALTER TABLE cameras ADD COLUMN IF NOT EXISTS maintain_conf real NOT NULL DEFAULT 0.30
+    CHECK (maintain_conf >= 0.0 AND maintain_conf <= 1.0);

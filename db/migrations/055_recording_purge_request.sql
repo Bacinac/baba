@@ -1,0 +1,15 @@
+-- "Delete all recordings" is a bulk delete of the whole media archive — tens
+-- of thousands of segment files on the slow media tier. Doing it inline in the
+-- API request blows past Cloudflare's ~100s proxy timeout (524) and, worse,
+-- the deletion is the recorder's job: it owns the media volume, deletes off
+-- the request path already (retention), and — because its indexer re-derives
+-- `recordings` rows from the files on disk at every bootstrap — rows only stay
+-- gone once the FILES are gone. So the API just records the request here and
+-- the recorder drains it: wipe files, drop rows, clear this flag.
+--
+-- Nullable single-shot flag on the recording_settings singleton: set to now()
+-- on request, cleared back to NULL once the recorder has finished the wipe.
+-- Persisting it (vs a fire-and-forget NOTIFY) makes the purge restart-safe —
+-- a recorder that dies mid-wipe picks the pending request back up on its next
+-- (re)connect and finishes it.
+ALTER TABLE recording_settings ADD COLUMN IF NOT EXISTS purge_requested_at timestamptz;

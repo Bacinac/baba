@@ -1,0 +1,6 @@
+[submodule "web/src/lib/kit"]
+	path = web/src/lib/kit
+	url = https://github.com/Bacinac/ui-kit.git
+[submodule "core/src/home_core"]
+	path = core/src/home_core
+	url = https://github.com/Bacinac/home-core.git

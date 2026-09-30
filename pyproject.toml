@@ -1,0 +1,85 @@
+[project]
+name = "baba-workspace"
+version = "0.0.0"
+description = "BABA monorepo workspace (dev-only; not published)"
+requires-python = ">=3.14"
+
+[tool.uv.workspace]
+members = ["core", "backends/*", "services/*"]
+
+[tool.uv.sources]
+baba-core = { workspace = true }
+baba-backend-onnxruntime = { workspace = true }
+baba-backend-openvino = { workspace = true }
+baba-backend-tensorrt = { workspace = true }
+baba-decoder-software = { workspace = true }
+baba-decoder-ffmpeg-nvdec = { workspace = true }
+baba-decoder-intel = { workspace = true }
+
+[tool.uv]
+# One lock for every image, so it resolves only the platform the images run on.
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+# norfair's metadata still caps numpy<2 (upstream fix, PR #335, was abandoned);
+# its runtime code is numpy-2 safe. The override lifts that one cap instead of
+# installing norfair with --no-deps and hand-listing its dependencies.
+override-dependencies = ["numpy>=2.2"]
+# filterpy declares matplotlib for its plotting helpers; the Kalman filter
+# norfair imports never touches it. openvino-telemetry reports to Google
+# Analytics whenever openvino's converter runs and no consent file exists —
+# which in a fresh container is always; openvino falls back to its own no-op
+# stub when the package is absent.
+exclude-dependencies = ["matplotlib", "openvino-telemetry"]
+
+[dependency-groups]
+# The accelerator runtime each baba/base:<variant> image carries for every
+# service built on top of it.
+base-cpu = ["baba-backend-onnxruntime[cpu]"]
+base-nvidia = ["baba-backend-onnxruntime[gpu]"]
+base-intel = ["baba-backend-onnxruntime[cpu]", "baba-backend-openvino"]
+test = ["pytest>=8.4", "httpx2>=2.13"]
+lint = ["ruff>=0.14"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+# BLE: a broad `except` must log the traceback or re-raise, so a failure is
+# never swallowed into a one-line warning. ASYNC: no blocking call on the
+# event loop and no task without an owner. S608: every SQL string built with
+# an f-string carries `# noqa: S608`, placed by someone who checked that
+# nothing interpolated can come from a request, so a new one gets that check
+# too. C901: see [tool.ruff.lint.mccabe].
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "BLE", "ASYNC", "S608", "C901"]
+# RUF001/002/003 flag Croatian diacritics (č ć š ž đ) in strings, docstrings
+# and comments as "ambiguous unicode". Our comments and UI copy are
+# intentionally Croatian, so these are false positives, not issues.
+# E501: line wrapping is HAND-owned here, and deliberately so — `ruff format`
+# is not run over this tree and running it would make several files worse
+# (it explodes the 13-line COCO_CLASSES table into 80 one-name lines, and
+# flattens the aligned constant/palette tables that are readable precisely
+# because they are aligned). What E501 would still flag on top of that is
+# unsplittable string/SQL/URL literals, so it is noise either way.
+# `ruff check` IS the gate and must stay clean.
+ignore = ["E501", "RUF001", "RUF002", "RUF003"]
+
+[tool.ruff.lint.mccabe]
+# A ceiling, not a target: a function that grows past it is split, and the
+# number is not raised to make room for it.
+max-complexity = 15
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's dependency-injection idiom puts these calls in argument defaults
+# (def handler(user=Depends(...), q=Query(...))). That's the framework's
+# intended usage, not the mutable-default footgun B008 guards against.
+extend-immutable-calls = [
+    "fastapi.Body",
+    "fastapi.Cookie",
+    "fastapi.Depends",
+    "fastapi.File",
+    "fastapi.Form",
+    "fastapi.Header",
+    "fastapi.Path",
+    "fastapi.Query",
+    "fastapi.Security",
+]

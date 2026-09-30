@@ -1,0 +1,1066 @@
+name: baba
+
+# Storage strategy:
+# - Fast tier (BABA_MODELS_HOST, BABA_STATE_HOST): SSD/NVMe, same pool as
+#   /mnt/docker. Hot, small, latency-sensitive.
+# - Media tier (BABA_MEDIA_HOST): one disk, everything the cameras produce —
+#   video segments, crops, clips, thumbnails, face/scene crops, reference
+#   photos, plate crops. A separate SSD tier for the small files was carried
+#   for a while; measured on a full day (30.08.2026) the whole media load is
+#   3.5 MB/s of sequential segment writes plus ~0.3 small files a second,
+#   which any CMR disk serves without noticing. Two tiers were two things to
+#   mount, migrate and lose — and on 31.08 one of them was.
+# Application logs go to stdout with docker json-file rotation (x-baba-svc),
+# not a bind-mounted file tier.
+
+# Image naming: prebuilt images live on GHCR — `docker compose pull` grabs
+# ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/<service>:<variant>. A local
+# `docker compose build` produces the SAME names, so pull and build are
+# interchangeable (install.sh pulls first, falls back to build). Set
+# BABA_IMAGE_TAG=<version> to pin a release — the tag becomes
+# <variant>-<version> (e.g. nvidia-0.1.250); unset = moving <variant> tag.
+# Bases (baba/base:*) stay local-only — they exist for building, never pulled.
+
+# Reusable healthcheck for pipeline services that don't expose HTTP.
+# The service writes /tmp/baba_healthy_<name> via baba_core.HealthMarker
+# every ~5 seconds; this probe fails the container if the file's mtime
+# has drifted more than ${age} seconds — meaning the asyncio loop is
+# stuck or the process is hung. Each call site sets `service`.
+#
+# Note: bind-mounting a YAML alias as an entire `healthcheck` block
+# requires the service to override only the test string. Done inline
+# per service for clarity; if we add a 7th pipeline service, fold this
+# into a Python wrapper that emits the JSON-array form programmatically.
+
+x-baba-env: &baba-env
+  BABA_NATS_URL: nats://${NATS_USER}:${NATS_PASSWORD}@nats:4222
+  BABA_MODELS_PATH: /models
+  BABA_MEDIA_PATH: /media
+  BABA_STATE_PATH: /state
+  # Log verbosity for every service (baba_core.setup_logging). Crank to DEBUG in
+  # .env to diagnose without a rebuild; a per-service override also works, e.g.
+  # BABA_LOG_LEVEL_DETECTOR=DEBUG. Default INFO.
+  BABA_LOG_LEVEL: ${BABA_LOG_LEVEL:-INFO}
+  # text (default) or json — one structured JSON object per log line for Loki/ES/jq.
+  BABA_LOG_FORMAT: ${BABA_LOG_FORMAT:-text}
+  # Hardware variant (cpu/nvidia/intel) — surfaced on the System page. Every
+  # service inherits it so the UI reports the real deployment, not the "cpu"
+  # default. Services that pick a backend from it (baba_core.build_variant)
+  # override it below with their own image's variant, so a mixed setup
+  # (BABA_<SERVICE>_VARIANT) binds what that image actually ships.
+  BABA_VARIANT: ${BABA_VARIANT:-cpu}
+  # Detector model path — the detector loads it; the api reads it only to show
+  # it on the System page (so it isn't blank there).
+  BABA_DETECTOR_MODEL: ${BABA_DETECTOR_MODEL:-/models/rtdetrv2-r18.onnx}
+  # OpenVINO precision for the small ORT-driven models (embedder/face/reid/sam2)
+  # on the Intel image. Empty = fp16 (baba_core.onnx_session default). Forwarded
+  # here so the documented BABA_OPENVINO_PRECISION knob actually reaches the
+  # services instead of being silently ignored.
+  BABA_OPENVINO_PRECISION: ${BABA_OPENVINO_PRECISION:-}
+  # Writable HOME for non-root runtime — some libs (fontconfig via PIL,
+  # numba, …) write a cache under $HOME; /tmp is always writable.
+  HOME: /tmp
+
+# Shared service defaults merged into every long-running service via
+# `<<: *baba-svc`:
+#  - logging: json-file capped at ~250 MB/container (5 × 50 MB) so a runaway
+#    warning loop can't fill the host disk.
+#  - cgroup_parent: places every ML/api container under one `baba.slice` parent
+#    cgroup, so hwstats (BABA_HWSTATS_CGROUP=/sys/fs/cgroup/baba.slice) can
+#    report BABA's OWN aggregate CPU/RAM — isolated from co-tenant containers
+#    (DIDA, training) and the host — instead of whole-host numbers. The
+#    data plane (postgres, nats) OVERRIDES this to baba-data.slice so the
+#    optional MemoryMax on baba.slice can't OOM the DB (see those services).
+x-baba-svc: &baba-svc
+  logging:
+    driver: json-file
+    options:
+      max-size: "50m"
+      max-file: "5"
+  cgroup_parent: baba.slice
+
+# Postgres client connection env — merged into every service that talks to the
+# DB via `<<: [*baba-env, *baba-db]`. One place to keep the DSN parts in sync
+# instead of repeating the 5-line block per service.
+x-baba-db: &baba-db
+  POSTGRES_HOST: postgres
+  POSTGRES_USER: ${POSTGRES_USER:-baba}
+  # No default: fail loud if unset rather than silently baking the well-known
+  # `changeme`. install.sh generates one; a hand-rolled .env must set it.
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run install.sh or set it in .env}
+  POSTGRES_DB: ${POSTGRES_DB:-baba}
+  POSTGRES_SSLMODE: ${POSTGRES_SSLMODE:-}
+
+# Shared file-marker healthcheck timing. Services merge it and add their own
+# `test` (per-service marker path) + `start_period`. detector keeps its own
+# (slower 20s/5s TRT-warmup probe).
+x-baba-healthcheck: &baba-healthcheck
+  interval: 15s
+  timeout: 3s
+  retries: 3
+
+services:
+
+  # ---------------------------------------------------------------------
+  # Shared base images. These services exist only to build the base
+  # images that the real services FROM. They never start (the `bases`
+  # profile excludes them from `docker compose up`). Build with:
+  #
+  #   docker compose --profile bases build
+  #
+  # before the first build of the rest. After that, the bases only need
+  # to be rebuilt when core/, backends/, or docker/base-*.Dockerfile
+  # change — service builds are fast deltas on top.
+  #
+  # Why a separate image per HW variant rather than per service class:
+  # on a fresh user install, layer dedup makes each extra service on
+  # top of the same base virtually free on disk. So `tracker` riding
+  # on baba/base:nvidia in a NVIDIA install costs no extra base layers
+  # vs riding on a separate CPU base, and the user pulls one big image
+  # not two.
+  # ---------------------------------------------------------------------
+  base-cpu:
+    profiles: [bases]
+    image: baba/base:cpu
+    build:
+      context: .
+      dockerfile: docker/base-cpu.Dockerfile
+    command: ["true"]
+
+  base-nvidia:
+    profiles: [bases]
+    image: baba/base:nvidia
+    build:
+      context: .
+      dockerfile: docker/base-nvidia.Dockerfile
+    command: ["true"]
+
+  base-intel:
+    profiles: [bases]
+    image: baba/base:intel
+    build:
+      context: .
+      dockerfile: docker/base-intel.Dockerfile
+    command: ["true"]
+
+  nats:
+    build:
+      context: docker
+      dockerfile: nats.Dockerfile
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/nats:common${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-nats
+    <<: *baba-svc
+    # The data plane lives in a SEPARATE slice from the ML workers. baba.slice
+    # carries an optional hard MemoryMax (co-tenant protection) whose OOM killer
+    # picks a victim INSIDE the slice — and the 2 GB SHM tmpfs is pinned
+    # (unreclaimable), so under pressure the postmaster/nats become fat targets
+    # and an OOM mid-write takes the DB (and every service's connection) down.
+    # Keeping them out of the capped slice means an ML runaway can't kill the
+    # data plane. (They're excluded from the hwstats baba.slice aggregate by
+    # design; the ML/api services are what that number should track.)
+    cgroup_parent: baba-data.slice
+    # docker/nats-start.sh builds the server config from these: the accounts in
+    # docker/nats-auth.conf, given bcrypt hashes of the passwords. The bus never
+    # runs open, so a missing credential stops compose here rather than leaving
+    # every service to fail its login. The accounts live in the config rather
+    # than in --user/--pass flags because only the config form carries
+    # per-subject permissions.
+    environment:
+      NATS_USER: ${NATS_USER:?NATS_USER is required — run ./install.sh --upgrade}
+      NATS_PASSWORD: ${NATS_PASSWORD:?NATS_PASSWORD is required — run ./install.sh --upgrade}
+      BABA_PEER_NATS_USER: ${BABA_PEER_NATS_USER:-dida}
+      BABA_PEER_NATS_PASSWORD: ${BABA_PEER_NATS_PASSWORD:?BABA_PEER_NATS_PASSWORD is required — run ./install.sh --upgrade}
+      BABA_NATS_WEBSOCKET: ${BABA_NATS_WS_BIND_IP:+1}
+    ports:
+      # Loopback by default. A host that feeds a consumer on another box (DIDA
+      # reading the bus) sets BABA_NATS_BIND_IP in .env, and names that box in
+      # BABA_NATS_PEER_IPS: each deploy fences the published ports to it
+      # (deploy/nats-fw.sh), so "LAN-published" still means the authorized
+      # peers, not the whole network.
+      - "${BABA_NATS_BIND_IP:-127.0.0.1}:4222:4222"
+      # The same bus over WebSocket (docker/nats-ws.conf), for a consumer that
+      # reaches this site only through an HTTP tunnel — a raw TCP port has no
+      # path through one. BABA_NATS_WS_BIND_IP publishes it to the LAN so the
+      # tunnel connector can reach it; the listener speaks TLS, so the tunnel's
+      # origin is https://. Without it the server has no WebSocket listener.
+      - "${BABA_NATS_WS_BIND_IP:-127.0.0.1}:4223:4223"
+    restart: unless-stopped
+    # NATS' built-in HTTP monitor (loopback only — see nats.conf).
+    # `wget --spider` is a clean 0/1 exit and ships in busybox.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # Carries the database across a Postgres major upgrade before the server
+  # starts; a no-op once that is done, and on a fresh install. Built locally
+  # (like the bases), never pulled. See docker/postgres-upgrade.sh.
+  postgres-upgrade:
+    build:
+      context: .
+      dockerfile: docker/postgres-upgrade.Dockerfile
+    image: baba/postgres-upgrade:pg18
+    pull_policy: build
+    container_name: baba-postgres-upgrade
+    <<: *baba-svc
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-baba}
+    volumes:
+      - ${BABA_STATE_HOST}:/state
+    restart: "no"
+
+  postgres:
+    image: pgvector/pgvector:pg18-trixie
+    container_name: baba-postgres
+    <<: *baba-svc
+    depends_on:
+      postgres-upgrade:
+        condition: service_completed_successfully
+    # Postgres answers compose's stop with a fast shutdown and a final
+    # checkpoint; the default 10 s before SIGKILL can cut that short, and the
+    # next major upgrade refuses a cluster that was not shut down cleanly.
+    stop_grace_period: 60s
+    # Out of the hard-capped baba.slice so an ML-worker memory spike can't OOM
+    # the DB mid-write (see nats above for the full rationale).
+    cgroup_parent: baba-data.slice
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-baba}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — run install.sh or set it in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-baba}
+    volumes:
+      # From Postgres 18 the image keeps its cluster in <major>/docker under
+      # this mount, so the next major's sits beside it for pg_upgrade.
+      - ${BABA_STATE_HOST}/postgresql:/var/lib/postgresql
+    restart: unless-stopped
+    # pg_isready is the canonical "accepting connections" probe; checks
+    # both that the server is up AND that it can answer for our db/user
+    # (which catches "started, but still initialising the data dir" on
+    # first boot). 30s start_period gives the cold initdb time to run.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-baba} -d ${POSTGRES_DB:-baba}"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+
+  go2rtc:
+    image: alexxit/go2rtc:1.9.14
+    container_name: baba-go2rtc
+    <<: *baba-svc
+    network_mode: host
+    # go2rtc.yaml uses ${VAR} substitution against its own env only for the
+    # listen ports. Streams (with camera RTSP credentials) are injected at
+    # runtime by the api's go2rtc_sync via the go2rtc API, NOT from env — so
+    # go2rtc gets an explicit allowlist of just the port vars, never the full
+    # .env (which carries POSTGRES_PASSWORD / BABA_SECRET_KEY / admin creds).
+    environment:
+      BABA_GO2RTC_API_PORT: ${BABA_GO2RTC_API_PORT:-1984}
+      BABA_GO2RTC_RTSP_PORT: ${BABA_GO2RTC_RTSP_PORT:-8554}
+      BABA_GO2RTC_WEBRTC_PORT: ${BABA_GO2RTC_WEBRTC_PORT:-8555}
+      # Basic auth on the API and RTSP. Only these two secrets reach go2rtc —
+      # never the full .env.
+      BABA_GO2RTC_API_USER: ${BABA_GO2RTC_API_USER:-baba}
+      BABA_GO2RTC_API_PASSWORD: ${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}
+    volumes:
+      # go2rtc persists API-added streams back to this file, so it needs rw.
+      # The api service's go2rtc_sync owns the streams section at runtime.
+      - ./go2rtc.yaml:/config/go2rtc.yaml
+    restart: unless-stopped
+    # /api/streams returns 200 with JSON when go2rtc is alive. The image
+    # ships wget via busybox. Since this container runs network_mode:host,
+    # the probe hits the host's localhost — same place api/ingestor reach
+    # it from. start_period covers go2rtc's discovery + WebRTC setup.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://${BABA_GO2RTC_API_USER:-baba}:$BABA_GO2RTC_API_PASSWORD@127.0.0.1:${BABA_GO2RTC_API_PORT:-1984}/api/streams || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
+  detector:
+    build:
+      context: .
+      dockerfile: services/detector/Dockerfile
+      target: ${BABA_DETECTOR_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/detector:${BABA_DETECTOR_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-detector
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      # Picks the detector backend: tensorrt / openvino / onnxruntime.
+      BABA_VARIANT: ${BABA_DETECTOR_VARIANT:-${BABA_VARIANT:-cpu}}
+      BABA_DETECTOR_MODEL: ${BABA_DETECTOR_MODEL:-/models/rtdetrv2-r18.onnx}
+      BABA_DETECTOR_BATCH: ${BABA_DETECTOR_BATCH:-8}
+      BABA_DETECTOR_BATCH_WAIT_MS: ${BABA_DETECTOR_BATCH_WAIT_MS:-20}
+      BABA_DETECTOR_CONF: ${BABA_DETECTOR_CONF:-0.10}
+      BABA_DETECTOR_INPUT_SIZE: ${BABA_DETECTOR_INPUT_SIZE:-640}
+      # Rolling pre-gate detection trace (incident replay evidence).
+      BABA_DETECTOR_TRACE_WINDOW_S: ${BABA_DETECTOR_TRACE_WINDOW_S:-1800}
+      BABA_DETECTOR_TRACE_MAX_DETS: ${BABA_DETECTOR_TRACE_MAX_DETS:-32}
+      # OpenVINO detector precision opt-in ("f16"). Explicit per-deployment:
+      # fp16 historically corrupted on SOME models (d-fine-m), so the OV
+      # backend self-verifies stability at load and refuses to serve on drift.
+      BABA_DETECTOR_OV_PRECISION: ${BABA_DETECTOR_OV_PRECISION:-}
+      # Detector head family: "dfine" (D-FINE/RT-DETR) or "rfdetr" (RF-DETR).
+      # Selects postprocessor (91->80 remap) + on-device ImageNet norm.
+      BABA_DETECTOR_MODEL_FAMILY: ${BABA_DETECTOR_MODEL_FAMILY:-dfine}
+      BABA_DEVICE_ID: ${BABA_DEVICE_ID:-0}
+      # DB-driven per-class / per-camera detection rules live in
+      # detector_global_rules + camera_detection_rules.  Refreshed via
+      # Postgres NOTIFY when the operator edits Settings → AI.
+    volumes:
+      # Models are inputs: read-only so a compromised detector can't rewrite the
+      # weights every service loads. Only the compiled-engine cache is writable,
+      # as its own sub-mount (same split as embedder/tracker/api).
+      - ${BABA_MODELS_HOST}:/models:ro
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      # Zero-copy frame reads: attaches to the ingestor's per-camera POSIX shm
+      # segments (FrameRingReader) via the shared /dev/shm tmpfs instead of
+      # receiving every frame again as an inline NATS payload (~55 MB/s saved).
+      # A shared VOLUME, not a shared IPC namespace — so an ingestor recreate
+      # or reboot doesn't orphan this reader.
+      - baba-shm:/dev/shm
+    depends_on:
+      nats:
+        condition: service_healthy
+      ingestor:
+        # Ordering only, for a clean first `compose up`. NO `restart: true`:
+        # with the shared /dev/shm volume this reader survives an ingestor
+        # recreate (it re-attaches to the new segment by name), so it must NOT
+        # be dragged into a recreate cascade — that cascade is exactly what
+        # orphaned the readers for hours (see container-churn memory).
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # File-marker liveness — see docs at top of file. 60s freshness threshold
+    # (a live detector refreshes the marker every few seconds; 60s catches a
+    # real stall without flapping). start_period is LONG (900s) on purpose: a
+    # cold start that has to build a TensorRT engine from a not-yet-cached model
+    # can take many minutes (the d-fine-m 960 build took ~11 min), and during
+    # start_period the container reports `starting`, not `unhealthy` — so the
+    # host health watchdog (scripts/heal-unhealthy.sh) never restarts a detector
+    # mid-build and loops it. Engines should be pre-built offline anyway
+    # (tools/prebuild_engine.py) so a cached-engine cold start is ~20s; the long
+    # window is cheap insurance. start_period only applies at startup, so
+    # steady-state hang detection (60s) is unaffected.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_detector && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_detector) )) -lt 60"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
+
+  # Reads the ingestor's per-camera POSIX shm frame rings (FrameRingReader)
+  # via the shared /dev/shm tmpfs volume to feed OSNet ReID — same pattern as
+  # the embedder. Shared VOLUME, not shared IPC namespace (see ingestor).
+  tracker:
+    build:
+      context: .
+      dockerfile: services/tracker/Dockerfile
+      target: ${BABA_TRACKER_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/tracker:${BABA_TRACKER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-tracker
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      # DB access: per-camera stillness settings + enabled flags load from
+      # the cameras table (live via cameras_changed NOTIFY).
+      <<: [*baba-env, *baba-db]
+      # COCO class IDs to track. Default covers NVR-relevant subjects.
+      # 0=person 1=bicycle 2=car 3=motorcycle 5=bus 7=truck 14=bird 15=cat 16=dog
+      # Leave empty to track all 80 classes (noisy — many false positives).
+      BABA_TRACKER_CLASSES: ${BABA_TRACKER_CLASSES:-0,1,2,3,5,7,14,15,16}
+      # Track lifecycle knobs are in SECONDS of wall time, not frames — with
+      # adaptive per-camera rates (cameras.idle_fps) a frame count would mean
+      # different real durations at different rates. The tracker replays
+      # skipped nominal ticks so these hold at any rate.
+      BABA_TRACKER_LOST_SECONDS: ${BABA_TRACKER_LOST_SECONDS:-10}
+      BABA_TRACKER_FPS: ${BABA_TRACKER_FPS:-15}
+      # OSNet x0_25 inline ReID. Missing model file → tracker falls back
+      # to IoU-only association with a loud warning (still usable, just
+      # no occlusion recovery via appearance). Download with
+      # `bash services/tracker/scripts/fetch_tracker_models.sh`.
+      BABA_TRACKER_REID_MODEL: ${BABA_TRACKER_REID_MODEL:-/models/osnet_x0_25_msmt17.onnx}
+      # The fail-loud GPU/ReID gates name this in their error text; without the
+      # forward the documented escape hatch never reaches the container.
+      BABA_REQUIRE_REID: ${BABA_REQUIRE_REID:-}
+      BABA_TRACKER_REID_DISTANCE_THRESHOLD: ${BABA_TRACKER_REID_DISTANCE_THRESHOLD:-0.30}
+      BABA_TRACKER_REID_LOST_SECONDS: ${BABA_TRACKER_REID_LOST_SECONDS:-20}
+      # Appearance-anchored presence hold (anchor_hold.py) — a settled person's
+      # track survives on the LOOK of their spot when detections die. Distance
+      # gate 0.30 validated from recordings (person-vs-empty ~0.52, noise ≤0.14).
+      # DIST=0 disables.
+      BABA_TRACKER_ANCHOR_HOLD_DIST: ${BABA_TRACKER_ANCHOR_HOLD_DIST:-0.30}
+      BABA_TRACKER_ANCHOR_MISS_LIMIT: ${BABA_TRACKER_ANCHOR_MISS_LIMIT:-3}
+      BABA_TRACKER_ANCHOR_CHECK_INTERVAL_S: ${BABA_TRACKER_ANCHOR_CHECK_INTERVAL_S:-2.0}
+      BABA_TRACKER_ANCHOR_MAX_AGE_H: ${BABA_TRACKER_ANCHOR_MAX_AGE_H:-12}
+      BABA_TRACKER_ANCHOR_MAX_AGE_NONPERSON_H: ${BABA_TRACKER_ANCHOR_MAX_AGE_NONPERSON_H:-168}
+      BABA_TRACKER_ANCHOR_CLASSES: ${BABA_TRACKER_ANCHOR_CLASSES:-0,2,3,5,7}
+      BABA_TRACKER_ANCHOR_CORROBORATION_MIN: ${BABA_TRACKER_ANCHOR_CORROBORATION_MIN:-1.5}
+      # Identity-at-source (identity_stamp.py): pets/vehicles named on the wire
+      # by OSNet vs enrolled reference photos — same numbers as the
+      # event-manager's finalize body-reference match. 0 disables a kind.
+      BABA_TRACKER_IDENTITY_PET_THRESHOLD: ${BABA_TRACKER_IDENTITY_PET_THRESHOLD:-0.30}
+      BABA_TRACKER_IDENTITY_MARGIN: ${BABA_TRACKER_IDENTITY_MARGIN:-0.08}
+      # Emission staleness cutoff: a lost (coasting) track stops being emitted
+      # this many seconds after its last real detection — Norfair keeps it for
+      # re-association; presence past this belongs to the appearance anchor.
+      BABA_TRACKER_EMIT_STALE_S: ${BABA_TRACKER_EMIT_STALE_S:-10}
+      # Picks the ONNX execution target for inline OSNet (baba_core.onnx_session).
+      BABA_VARIANT: ${BABA_TRACKER_VARIANT:-${BABA_VARIANT:-cpu}}
+    volumes:
+      - ${BABA_MODELS_HOST}:/models:ro
+      # Writable nested bind for the OpenVINO compile cache only — model
+      # files stay read-only, but without this every container start
+      # recompiles (~60-100 s cold start; one deploy health-wait already
+      # tripped on it). Harmless on the nvidia variant (no OV backend).
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      # Shared frame-ring SHM for zero-copy OSNet ReID crop reads (see ingestor).
+      - baba-shm:/dev/shm
+    depends_on:
+      nats:
+        condition: service_healthy
+      ingestor:
+        # Ordering only — NO `restart: true` (the shared /dev/shm volume lets
+        # this reader survive an ingestor recreate; see detector note).
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_tracker && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_tracker) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 15s
+
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: ${BABA_API_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/api:${BABA_API_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-api
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      BABA_API_PORT: ${BABA_API_PORT:-8080}
+      # Peer (system-to-system) read access: CSV of `name:key`. DIDA's camera
+      # proxy presents its key as X-Peer-Key to read events/clips as a viewer —
+      # no users row, revoked by editing this and restarting. Empty = disabled.
+      BABA_PEER_KEYS: ${BABA_PEER_KEYS:-}
+      # App revision stamp (GET /version, /system/info). Git-derived by the push
+      # hook, mounted read-only below and read per-request so a push refreshes it
+      # live without an api rebuild.
+      BABA_REVISION_FILE: /app/revision.json
+      # go2rtc REST API — go2rtc_sync mirrors the cameras table into go2rtc's
+      # stream registry. Must follow the port remap so it reaches BABA's own
+      # go2rtc when it's not on the default 1984 (e.g. sharing a host with
+      # Frigate's go2rtc). Without this the api defaults to 1984 and can't sync.
+      BABA_GO2RTC_URL: http://host.docker.internal:${BABA_GO2RTC_API_PORT:-1984}
+      # Basic-auth creds for the go2rtc REST API (empty = auth off). go2rtc_sync
+      # and the snapshot proxy present these; only these two go2rtc secrets
+      # reach the api, not the whole go2rtc config.
+      BABA_GO2RTC_API_USER: ${BABA_GO2RTC_API_USER:-baba}
+      BABA_GO2RTC_API_PASSWORD: ${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}
+      BABA_ADMIN_USERNAME: ${BABA_ADMIN_USERNAME:-admin}
+      BABA_ADMIN_PASSWORD: ${BABA_ADMIN_PASSWORD:-}
+      BABA_SECRET_KEY: ${BABA_SECRET_KEY:-}
+      BABA_COOKIE_SECURE: ${BABA_COOKIE_SECURE:-false}
+      # The only peers whose X-Forwarded-For the login limiter believes. The
+      # api port is published, so a header honoured from any peer would let a
+      # LAN host rotate fake addresses; the deploy/ proxy templates name their
+      # own proxy here instead.
+      BABA_TRUSTED_PROXIES: web
+      # Comma-separated CORS allowlist. Empty falls back to the dev
+      # SvelteKit origins in api/config.py; production sets the public
+      # origin(s) of the deployed frontend here.
+      BABA_CORS_ORIGINS: ${BABA_CORS_ORIGINS:-}
+      # Reference-photo embedder. Missing file → label flow still works,
+      # photo upload returns 503 with an explanatory message.
+      BABA_EMBEDDER_MODEL: ${BABA_EMBEDDER_MODEL:-/models/osnet_x0_25_msmt17.onnx}
+      # Face stack (YuNet detector + AuraFace embedder). Same fallback
+      # — if either file is missing, face-aware re-ID is silently
+      # disabled and body-only re-ID continues working.
+      BABA_FACE_DETECTOR_MODEL: ${BABA_FACE_DETECTOR_MODEL:-/models/face_yunet.onnx}
+      # Face recognition model registry key. Default 'auraface' ships
+      # with BABA (Apache 2.0). Other keys ('topofr_r200_glint360k', ...)
+      # are BYOM — see core/src/baba_core/face_models.py for the
+      # registry and per-model download instructions.
+      BABA_FACE_RECOGNITION_MODEL: ${BABA_FACE_RECOGNITION_MODEL:-auraface}
+      # SAM2 (Segment Anything 2) — refines VLM zone suggestions into
+      # pixel-perfect polygons. Empty / missing files → suggestions stay
+      # as the VLM's rough polygon. Both encoder + decoder must be present.
+      BABA_SAM2_ENCODER_MODEL: ${BABA_SAM2_ENCODER_MODEL:-/models/sam2-hiera-tiny-encoder.onnx}
+      BABA_SAM2_DECODER_MODEL: ${BABA_SAM2_DECODER_MODEL:-/models/sam2-hiera-tiny-decoder.onnx}
+      # Master kill-switch for SAM2 refinement. Set to 0 to skip refinement
+      # even when the model files are present (useful when comparing raw VLM
+      # suggestions against refined ones, or if refinement is misbehaving).
+      BABA_SAM2_REFINE: ${BABA_SAM2_REFINE:-1}
+      # Picks the ONNX execution target (baba_core.onnx_session) and the clip
+      # transcoder. The api runs the SAME face models in-process as the
+      # pipeline for reference-photo enrollment (SCRFD detector + TopoFR/
+      # AuraFace embedder), so it follows the host accelerator like the
+      # pipeline services. VRAM caution: the RTX 3060 is co-tenanted with
+      # ShelfXplore's onnx-inference-server (~7 GB) — if it ever gets tight,
+      # set BABA_API_VARIANT=cpu (but then GPU-only face models won't enroll;
+      # use CPU-capable yunet+auraface instead).
+      BABA_VARIANT: ${BABA_API_VARIANT:-${BABA_VARIANT:-cpu}}
+      # Background loop that calls the configured AI provider to draft
+      # labels for newly observed identities. Off by default (costs
+      # money). Set BABA_AI_AUTO_DESCRIBE=1 to enable.
+      BABA_AI_AUTO_DESCRIBE: ${BABA_AI_AUTO_DESCRIBE:-0}
+      BABA_AI_AUTO_DESCRIBE_INTERVAL_S: ${BABA_AI_AUTO_DESCRIBE_INTERVAL_S:-120}
+      BABA_AI_AUTO_DESCRIBE_BATCH: ${BABA_AI_AUTO_DESCRIBE_BATCH:-5}
+    ports:
+      - "${BABA_API_PORT:-8080}:${BABA_API_PORT:-8080}"
+    extra_hosts:
+      # Reach go2rtc (which runs network_mode: host) from this bridge-net container.
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # API needs persistent state for the JWT signing key (and future auth data).
+      - ${BABA_STATE_HOST}/api:/state
+      # RW: api serves thumbnails/crops AND writes reference-photo
+      # originals to /media/reference_photos/<id>.jpg during enrollment.
+      # The narrower endpoints (`reference_photos/{name}`, `crops/{name}`,
+      # `thumbnails/{name}`) all path-validate file names so a compromised
+      # api can't reach outside its mount even with RW.
+      - ${BABA_MEDIA_HOST}:/media
+      # Fast tier nested over the bulk media root: only `segments` (TBs of
+      # sequential video) belongs on the slow array. Everything else is
+      # small-file random I/O — measured 228x faster on the SSD — and the
+      # container still sees ONE /media tree, so stored relative paths are
+      # unchanged. Keeping /media itself on the bulk volume means retention
+      # and the disk high-water net keep measuring the disk that fills.
+      # Reference-photo enrollment runs DINOv2 ONNX in-process; mount the
+      # same models dir the embedder uses.
+      - ${BABA_MODELS_HOST}:/models:ro
+      # Writable nested bind for the OpenVINO compile cache only — model
+      # files stay read-only, but without this every container start
+      # recompiles (~60-100 s cold start; one deploy health-wait already
+      # tripped on it). Harmless on the nvidia variant (no OV backend).
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      # Shared frame-ring SHM: the live-grid MJPEG endpoint reads the
+      # ingestor's downscaled NV12 rings (FrameRingReader) to serve
+      # image-decoded grid tiles instead of 7× full-res video (live_view.py).
+      - baba-shm:/dev/shm
+      # App revision stamp (git-derived; scripts/gen-revision.sh). Read-only,
+      # re-read per request so a push updates /version without an api rebuild.
+      - ./revision.json:/app/revision.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    # /healthz returns {ok:true}. urllib is stdlib so no extra deps.
+    # Lower start_period: api waits for postgres healthy already, then
+    # has to run migrations + bootstrap admin + load embedder; 45s
+    # covers a cold start on slower hosts with TRT engine compile.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(f\"http://127.0.0.1:${BABA_API_PORT:-8080}/healthz\", timeout=3).read() else 1)' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 45s
+
+  web:
+    build:
+      context: .
+      dockerfile: web/Dockerfile
+      # prod = `vite build` (adapter-node) behind web/server.mjs, which
+      # re-creates the /api and /go2rtc same-origin proxies the dev server
+      # injects via Vite's `server.proxy`. Set BABA_WEB_TARGET=dev in .env
+      # for the HMR dev server (bind-mounted src). Running Vite dev in
+      # production was the eternal-spinner class of bug: every container
+      # recreate invalidated open clients' module graphs (2026-07-13).
+      target: ${BABA_WEB_TARGET:-prod}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/web:${BABA_WEB_TARGET:-prod}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-web
+    <<: *baba-svc
+    environment:
+      # Follow BABA_API_PORT so we don't pin a stale port if .env changes.
+      BABA_API_URL: http://api:${BABA_API_PORT:-8080}
+      # go2rtc runs network_mode: host on the docker host; reach it via the
+      # host gateway from inside this bridge-networked container.
+      BABA_GO2RTC_URL: http://host.docker.internal:${BABA_GO2RTC_API_PORT:-1984}
+      # go2rtc basic-auth creds (empty password = auth off). The web-server
+      # /go2rtc proxy (Vite in dev, server.mjs in prod) injects these as an
+      # Authorization header on browser live-stream requests, since the
+      # browser itself has no go2rtc credentials.
+      BABA_GO2RTC_API_USER: ${BABA_GO2RTC_API_USER:-baba}
+      BABA_GO2RTC_API_PASSWORD: ${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}
+      BABA_TRUSTED_EDGES: ${BABA_TRUSTED_EDGES:-}
+      BABA_CORS_ORIGINS: ${BABA_CORS_ORIGINS:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "5173:5173"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:5173/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Dev bind-mounts so Vite HMR sees host edits live (node_modules stays in
+    # the image — native bindings compiled against the container's libc).
+    # Harmless under the prod target: the runtime reads only /app/build +
+    # /app/server.mjs, neither of which is shadowed.
+    volumes:
+      - ./web/src:/app/src
+      - ./web/static:/app/static
+      - ./web/svelte.config.js:/app/svelte.config.js
+      - ./web/vite.config.ts:/app/vite.config.ts
+      - ./web/tsconfig.json:/app/tsconfig.json
+      - ./web/package.json:/app/package.json
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  recorder:
+    build:
+      context: .
+      dockerfile: services/recorder/Dockerfile
+      target: ${BABA_RECORDER_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/recorder:${BABA_RECORDER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-recorder
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      BABA_RECORDER_SEGMENT_SECONDS: ${BABA_RECORDER_SEGMENT_SECONDS:-300}
+      BABA_RECORDER_RTSP_TIMEOUT_S: ${BABA_RECORDER_RTSP_TIMEOUT_S:-15}
+      # Same as ingestor: all camera streams come from go2rtc as RTSP, so
+      # vendor-specific protocols (FLV/Baichuan, ONVIF, ...) are normalised
+      # before reaching ffmpeg.
+      BABA_GO2RTC_RTSP: rtsp://${BABA_GO2RTC_API_USER:-baba}:${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}@host.docker.internal:${BABA_GO2RTC_RTSP_PORT:-8554}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${BABA_MEDIA_HOST}:/media
+      # Fast tier nested over the bulk media root: only `segments` (TBs of
+      # sequential video) belongs on the slow array. Everything else is
+      # small-file random I/O — measured 228x faster on the SSD — and the
+      # container still sees ONE /media tree, so stored relative paths are
+      # unchanged. Keeping /media itself on the bulk volume means retention
+      # and the disk high-water net keep measuring the disk that fills.
+    depends_on:
+      # The schema is the api's to create — see the ingestor's note.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    # Recorder cold-start spawns one ffmpeg per camera; on an 8-camera
+    # fleet that can take 10-20s before the supervisor's event loop is
+    # quiet enough to touch the marker. 45s start_period is generous.
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_recorder && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_recorder) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 45s
+
+  event-manager:
+    build:
+      context: .
+      dockerfile: services/event-manager/Dockerfile
+      target: ${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/event-manager:${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-event-manager
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      BABA_EVENT_TRACK_TIMEOUT_MS: ${BABA_EVENT_TRACK_TIMEOUT_MS:-5000}
+      BABA_EVENT_MIN_TRACK_LIFETIME_MS: ${BABA_EVENT_MIN_TRACK_LIFETIME_MS:-1500}
+      BABA_EVENT_MIN_OBSERVATIONS: ${BABA_EVENT_MIN_OBSERVATIONS:-5}
+      # zone_dwell (loiter) threshold. Read by EventManagerConfig; was
+      # documented + envgen-written but never forwarded here, so it was
+      # silently pinned at the 30000 code default regardless of .env.
+      BABA_EVENT_DWELL_MS: ${BABA_EVENT_DWELL_MS:-30000}
+      BABA_GO2RTC_URL: http://host.docker.internal:${BABA_GO2RTC_API_PORT:-1984}
+      # event-manager's last-resort thumbnail is a live frame from go2rtc, so it
+      # is a go2rtc API client like api and web and needs the same basic-auth
+      # pair. Without it, enabling auth stops thumbnails and NOTHING says so —
+      # events just start arriving without a picture.
+      BABA_GO2RTC_API_USER: ${BABA_GO2RTC_API_USER:-baba}
+      BABA_GO2RTC_API_PASSWORD: ${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}
+      BABA_THUMBNAIL_MAX_WIDTH: ${BABA_THUMBNAIL_MAX_WIDTH:-640}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ${BABA_MEDIA_HOST}:/media
+      # Fast tier nested over the bulk media root: only `segments` (TBs of
+      # sequential video) belongs on the slow array. Everything else is
+      # small-file random I/O — measured 228x faster on the SSD — and the
+      # container still sees ONE /media tree, so stored relative paths are
+      # unchanged. Keeping /media itself on the bulk volume means retention
+      # and the disk high-water net keep measuring the disk that fills.
+      # Shared frame-ring SHM: reads the exact frame a detection ran on
+      # (get_by_sequence) to bake the box-thumbnail — see snapshot.py / ingestor.
+      - baba-shm:/dev/shm
+    depends_on:
+      # A START GATE, not just ordering: the api applies the schema migrations,
+      # and this service writes columns a recent one added. If the api never
+      # reports healthy this stays down — which is why ingestor and recorder do
+      # NOT have this line: recording is the one thing that waits for nothing.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      ingestor:
+        # Ordering only — NO `restart: true` (shared /dev/shm volume; see detector).
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_event-manager && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_event-manager) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 20s
+
+  # One-shot mode guard for the shared frame-ring volume. The `o: mode=1777`
+  # driver option is not reliably re-applied when the tmpfs REMOUNTS after its
+  # last consumer stops (docker 29.4.x drops mode= while keeping size=; fixed
+  # in 29.6.x) — the volume comes back root:0755 and the non-root ingestor
+  # can't create /baba_cam_* segments: the whole detection pipeline silently
+  # blinds while live+recording keep working. Normalizing the mode as root
+  # before the ingestor starts makes every `compose up` deterministic on any
+  # engine version. scripts/heal-unhealthy.sh carries the same guard for the
+  # daemon-restart path where this one-shot doesn't re-run.
+  shm-init:
+    image: busybox:1.37
+    container_name: baba-shm-init
+    user: "0:0"
+    command: ["chmod", "1777", "/dev/shm"]
+    restart: "no"
+    volumes:
+      - baba-shm:/dev/shm
+
+  # Ingestor supervisor: single container, reads `cameras` from Postgres and
+  # spawns one ffmpeg worker per enabled row. React to NOTIFY 'cameras_changed'
+  # so adding/removing/updating cameras requires no compose changes.
+  ingestor:
+    build:
+      context: .
+      dockerfile: services/ingestor/Dockerfile
+      target: ${BABA_INGESTOR_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/ingestor:${BABA_INGESTOR_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-ingestor
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    # Owns the POSIX shm segments holding per-camera frame rings. Every SHM
+    # consumer (detector/tracker/embedder/state-evaluator) mounts the SAME
+    # `baba-shm` tmpfs at /dev/shm — a shared VOLUME, not a shared IPC
+    # namespace. That decouples the readers from this container's lifecycle:
+    # an ingestor recreate (or a host reboot) no longer orphans them — the
+    # segment files persist in the volume, readers re-attach to them by name,
+    # and their `restart: unless-stopped` can actually heal a crash (no stale
+    # container-ID baked into the IPC handle, which was the multi-hour-outage
+    # trap). The volume's `size=2g` (see the top-level `volumes:` block) sizes
+    # /dev/shm for an 8-camera 1080p fleet; the 64 MB default is far too small.
+    volumes:
+      - baba-shm:/dev/shm
+    environment:
+      <<: [*baba-env, *baba-db]
+      # All camera streams are routed through go2rtc (network_mode: host) so
+      # we get a single uniform RTSP source no matter what protocol the camera
+      # speaks (RTSP, FLV/Baichuan, ONVIF, ...). go2rtc handles that diversity.
+      BABA_GO2RTC_RTSP: rtsp://${BABA_GO2RTC_API_USER:-baba}:${BABA_GO2RTC_API_PASSWORD:?BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade}@host.docker.internal:${BABA_GO2RTC_RTSP_PORT:-8554}
+      # Picks the video decoder: ffmpeg-nvdec-nv12 / vaapi-nv12 / software.
+      BABA_VARIANT: ${BABA_INGESTOR_VARIANT:-${BABA_VARIANT:-cpu}}
+      # A host whose variant default does not suit it names its one decoder
+      # here — an N305 iGPU needs qsv-nv12 (its VAAPI path dies every ~60 s).
+      BABA_DECODER_BACKEND: ${BABA_DECODER_BACKEND:-}
+      # Intel media render node for the QSV/VAAPI decoders. Empty on non-Intel
+      # hosts (VAAPI then uses ffmpeg's default /dev/dri/renderD128). Set in
+      # .env to the exposed node when it isn't 128 — e.g. a Proxmox LXC that
+      # passes through renderD129. Without this the decoder targets a
+      # non-existent renderD128 and VAAPI init fails ("Error opening output").
+      BABA_VAAPI_DEVICE: ${BABA_VAAPI_DEVICE:-}
+      BABA_QSV_DEVICE: ${BABA_QSV_DEVICE:-}
+      # Adaptive-fps control loop (cameras.idle_fps): hysteresis before a
+      # quiet camera decays to idle_fps, and the staleness bound after which
+      # a silent tracker feed forces FULL rate (fail toward coverage).
+      BABA_INGESTOR_ACTIVE_HOLD_S: ${BABA_INGESTOR_ACTIVE_HOLD_S:-15}
+      BABA_INGESTOR_ACTIVITY_STALE_S: ${BABA_INGESTOR_ACTIVITY_STALE_S:-10}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      # The schema is the api's to create: it runs the migrations at start-up,
+      # and a service that reads a table before then dies on "relation does not
+      # exist". Only ever visible on a FIRST install, where it cost this
+      # instance its whole stack — every existing instance already has the
+      # tables, so the race is invisible until the day somebody installs.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      shm-init:
+        # The frame-ring volume must be world-writable BEFORE the (non-root)
+        # ingestor tries to create its first segment — see shm-init.
+        condition: service_completed_successfully
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_ingestor && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_ingestor) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 20s
+
+  # Reolink doorbell button → doorbell_press event. Subscribes to the camera's
+  # Baichuan push channel (TCP :9000) and inserts an `events` row on a press;
+  # the api events-bridge mirrors it to NATS so DIDA chimes/notifies. Talks to
+  # the camera's control API directly over the LAN (bridge net reaches it), so
+  # no go2rtc/GPU/media — just Postgres.
+  doorbell:
+    build:
+      context: .
+      dockerfile: services/doorbell/Dockerfile
+      target: ${BABA_DOORBELL_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/doorbell:${BABA_DOORBELL_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-doorbell
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      # Camera slugs that are doorbells (comma-separated). Empty means this
+      # install has no doorbell: the service idles healthy instead of
+      # guessing a slug — an instance without a bell (cabin) crash-looped on
+      # a guessed default, while a WRONG explicit slug still dies loudly.
+      BABA_DOORBELL_SLUGS: ${BABA_DOORBELL_SLUGS:-}
+      BABA_DOORBELL_POLL_SECONDS: ${BABA_DOORBELL_POLL_SECONDS:-5}
+    depends_on:
+      # The schema is the api's to create — see the ingestor's note.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_doorbell && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_doorbell) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 20s
+
+  # Crops detected objects from the ingestor's mainstream frame ring,
+  # produces vector embeddings, and writes them to track_embedding_samples.
+  # Shares ingestor's IPC namespace so its POSIX shm lookups (FrameRingReader)
+  # see the per-camera segments the ingestor created.
+  embedder:
+    build:
+      context: .
+      dockerfile: services/embedder/Dockerfile
+      target: ${BABA_EMBEDDER_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/embedder:${BABA_EMBEDDER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-embedder
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      # DINOv2 (whole-body re-ID). Missing → stub random vectors.
+      BABA_EMBEDDER_MODEL: ${BABA_EMBEDDER_MODEL:-/models/osnet_x0_25_msmt17.onnx}
+      # Face stack — same fallback. Auto-detected presence enables face
+      # path inside the embedder; pure-body path keeps working otherwise.
+      BABA_FACE_DETECTOR_MODEL: ${BABA_FACE_DETECTOR_MODEL:-/models/face_yunet.onnx}
+      # Face recognition model registry key. Default 'auraface' ships
+      # with BABA (Apache 2.0). Other keys ('topofr_r200_glint360k', ...)
+      # are BYOM — see core/src/baba_core/face_models.py for the
+      # registry and per-model download instructions.
+      BABA_FACE_RECOGNITION_MODEL: ${BABA_FACE_RECOGNITION_MODEL:-auraface}
+      # Picks the ONNX execution target (baba_core.onnx_session).
+      BABA_VARIANT: ${BABA_EMBEDDER_VARIANT:-${BABA_VARIANT:-cpu}}
+    volumes:
+      - ${BABA_MODELS_HOST}:/models:ro
+      # Writable nested bind for the OpenVINO compile cache only — model
+      # files stay read-only, but without this every container start
+      # recompiles (~60-100 s cold start; one deploy health-wait already
+      # tripped on it). Harmless on the nvidia variant (no OV backend).
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      # RW: embedder writes one 224x224 JPEG per sample under
+      # crops/<sample_uuid>.jpg. Stored crop becomes the canonical
+      # "what does this identity look like" image used by the gallery,
+      # detail page, and AI describe call.
+      - ${BABA_MEDIA_HOST}:/media
+      # Fast tier nested over the bulk media root: only `segments` (TBs of
+      # sequential video) belongs on the slow array. Everything else is
+      # small-file random I/O — measured 228x faster on the SSD — and the
+      # container still sees ONE /media tree, so stored relative paths are
+      # unchanged. Keeping /media itself on the bulk volume means retention
+      # and the disk high-water net keep measuring the disk that fills.
+      # Shared frame-ring SHM for zero-copy crop reads (see ingestor).
+      - baba-shm:/dev/shm
+    depends_on:
+      # A START GATE, not just ordering: the api applies the schema migrations,
+      # and this service writes columns a recent one added. If the api never
+      # reports healthy this stays down — which is why ingestor and recorder do
+      # NOT have this line: recording is the one thing that waits for nothing.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      ingestor:
+        # Ordering only — NO `restart: true` (shared /dev/shm volume; see detector).
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_embedder && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_embedder) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 30s
+
+  state-evaluator:
+    build:
+      context: .
+      dockerfile: services/state-evaluator/Dockerfile
+      target: ${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/state-evaluator:${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-state-evaluator
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    environment:
+      <<: [*baba-env, *baba-db]
+      # DINOv2 ViT-S/14 (general-purpose visual features — the right tool for
+      # scene structure, unlike OSNet which is person-identity tuned). 384-d.
+      # A missing model file crash-loops the container loudly (fail-loud);
+      # scene-state evaluation cannot run without it.
+      BABA_STATE_EVALUATOR_MODEL: ${BABA_STATE_EVALUATOR_MODEL:-/models/dinov2-vits14.onnx}
+      # Picks the ONNX execution target (baba_core.onnx_session).
+      BABA_VARIANT: ${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}
+    volumes:
+      - ${BABA_MODELS_HOST}:/models:ro
+      # Writable nested bind for the OpenVINO compile cache only — model
+      # files stay read-only, but without this every container start
+      # recompiles (~60-100 s cold start; one deploy health-wait already
+      # tripped on it). Harmless on the nvidia variant (no OV backend).
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      # RW: writes one reference crop JPEG per captured prototype under
+      # scene_crops/<prototype_uuid>.jpg.
+      - ${BABA_MEDIA_HOST}:/media
+      # Fast tier nested over the bulk media root: only `segments` (TBs of
+      # sequential video) belongs on the slow array. Everything else is
+      # small-file random I/O — measured 228x faster on the SSD — and the
+      # container still sees ONE /media tree, so stored relative paths are
+      # unchanged. Keeping /media itself on the bulk volume means retention
+      # and the disk high-water net keep measuring the disk that fills.
+      # Shared frame-ring SHM for zero-copy frame reads (see ingestor).
+      - baba-shm:/dev/shm
+    depends_on:
+      # A START GATE, not just ordering: the api applies the schema migrations,
+      # and this service writes columns a recent one added. If the api never
+      # reports healthy this stays down — which is why ingestor and recorder do
+      # NOT have this line: recording is the one thing that waits for nothing.
+      api:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+      ingestor:
+        # Ordering only — NO `restart: true` (shared /dev/shm volume; see detector).
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_state-evaluator && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_state-evaluator) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 30s
+
+  # Host hardware telemetry (CPU / RAM / GPU) → baba.stats.hardware → System
+  # page. Vendor-agnostic: probes nvidia-smi / intel_gpu_top at runtime. CPU +
+  # RAM come from /proc (host-wide inside the container, no mount needed).
+  hwstats:
+    build:
+      context: .
+      dockerfile: services/hwstats/Dockerfile
+      target: ${BABA_VARIANT:-cpu}
+    image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/hwstats:${BABA_VARIANT:-cpu}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
+    container_name: baba-hwstats
+    # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
+    # which puts the interpreter somewhere a non-root uid can exec). Matches
+    # the host user so bind-mounted media/state stay mutually writable.
+    user: "${BABA_UID:-1000}:${BABA_GID:-1000}"
+    <<: *baba-svc
+    # Share the host cgroup namespace so /sys/fs/cgroup shows the full host
+    # tree — hwstats then reads the baba.slice parent (BABA_HWSTATS_CGROUP,
+    # placed via the x-baba-svc cgroup_parent) to report BABA's OWN aggregate
+    # CPU/RAM, isolated from co-tenant containers (DIDA, training) and the host.
+    cgroup: host
+    environment:
+      <<: *baba-env
+      # Read BABA's aggregate cgroup, not the host root — see cgroup_parent.
+      BABA_HWSTATS_CGROUP: /sys/fs/cgroup/baba.slice
+      # Optional: the deployment's RAM ceiling in MB (e.g. the Proxmox LXC's
+      # allocated memory). A Proxmox LXC's externally-imposed limit isn't
+      # visible in its own cgroup (reads "max"), so set it here for an accurate
+      # RAM bar; unset falls back to the physical host RAM.
+      BABA_HWSTATS_MEM_LIMIT_MB: ${BABA_HWSTATS_MEM_LIMIT_MB:-}
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/baba_healthy_hwstats && test $(( $(date +%s) - $(stat -c %Y /tmp/baba_healthy_hwstats) )) -lt 30"]
+      <<: *baba-healthcheck
+      start_period: 15s
+
+# Media volume note:
+# The recorder service (added later) will mount BABA_MEDIA_HOST at /media. That
+# host path is expected to be on a separate, larger, slower disk than the rest
+# of the stack. Set it in .env to wherever the HDD/array is mounted.
+
+volumes:
+  # Shared frame-ring SHM. A tmpfs (RAM-backed, ephemeral) mounted at /dev/shm
+  # in the ingestor (writer) and every SHM reader (detector, tracker, embedder,
+  # state-evaluator). This REPLACES the old `ipc: service:ingestor` namespace
+  # sharing: a shared volume decouples the readers from the ingestor's container
+  # ID, so an ingestor recreate — or a host reboot, where `depends_on` ordering
+  # is ignored — no longer orphans them. Readers re-open the per-camera segment
+  # by name (FrameRingReader already retries on FileNotFoundError and re-attaches
+  # after N misses), and `restart: unless-stopped` can heal a crashed reader
+  # because there's no stale container-ID baked into an IPC handle. size=2g
+  # matches the previous ingestor shm_size (8-camera 1080p fleet).
+  baba-shm:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      # mode=1777 = sticky, world-writable, like a real /dev/shm. Without it the
+      # tmpfs volume comes back root:root 0755 on every recreate/reboot, and the
+      # non-root (uid 1000) ingestor can't create the per-camera /baba_cam_*
+      # segments → PermissionError → the whole SHM pipeline (detector/tracker/
+      # embedder/state-evaluator) goes blind while live+recording (go2rtc-direct)
+      # keep working, masking the outage. Fixed 2026-07-09 after a 14:46 volume
+      # recreate reset perms and killed detection for ~3h.
+      o: size=2g,mode=1777

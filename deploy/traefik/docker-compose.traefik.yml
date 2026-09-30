@@ -1,0 +1,56 @@
+# Traefik v3 reverse proxy override for BABA.
+#
+# Apply with:
+#   docker compose -f docker-compose.yml -f deploy/traefik/docker-compose.traefik.yml up -d
+#
+# Replace `baba.example.com` in the labels below with your real
+# hostname before bringing the stack up.
+
+services:
+
+  traefik:
+    image: traefik:v3.2
+    container_name: baba-traefik
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # Read-only socket — Traefik only watches container labels, never
+      # invokes the Docker API for mutation. Safer than rw.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./deploy/traefik/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ${BABA_STATE_HOST}/traefik:/letsencrypt
+    labels:
+      - traefik.enable=true
+
+  api:
+    ports: !reset []
+    # Behind a proxy the api sees only the proxy's IP, so unless that proxy is
+    # named here every client shares ONE login bucket — five bad attempts from
+    # anyone lock out the world.
+    environment:
+      BABA_TRUSTED_PROXIES: traefik
+    labels:
+      - traefik.enable=true
+      # API gets the /api/* prefix on the public host, strips on its way in.
+      - "traefik.http.routers.baba-api.rule=Host(`baba.example.com`) && PathPrefix(`/api`)"
+      - traefik.http.routers.baba-api.entrypoints=websecure
+      - traefik.http.routers.baba-api.tls.certresolver=letsencrypt
+      - traefik.http.routers.baba-api.middlewares=baba-api-strip
+      - traefik.http.middlewares.baba-api-strip.stripprefix.prefixes=/api
+      - traefik.http.services.baba-api.loadbalancer.server.port=8080
+
+  web:
+    ports: !reset []
+    labels:
+      - traefik.enable=true
+      - "traefik.http.routers.baba-web.rule=Host(`baba.example.com`)"
+      - traefik.http.routers.baba-web.entrypoints=websecure
+      - traefik.http.routers.baba-web.tls.certresolver=letsencrypt
+      - traefik.http.services.baba-web.loadbalancer.server.port=5173
+      # API rule must outrank the catch-all web router, otherwise web
+      # eats /api/* too. priority 100 vs default 0.
+      - traefik.http.routers.baba-web.priority=10
+      - traefik.http.routers.baba-api.priority=100

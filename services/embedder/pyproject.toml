@@ -1,0 +1,30 @@
+[project]
+name = "baba-embedder"
+version = "0.1.0"
+description = "Produces DINOv2 embeddings for tracked objects, cropped from the ingestor's mainstream frame ring"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "asyncpg>=0.30",
+    "nats-py>=2.9",
+    "msgspec>=0.19",
+    "numpy>=2.0",
+    "opencv-python-headless>=4.10",
+    "pgvector>=0.3",
+    # Inference wheel is provided by the baba-backend-* plugin package
+    # installed by the Dockerfile target: ./backends/onnxruntime (cpu),
+    # ./backends/onnxruntime[gpu] (nvidia), or ./backends/onnxruntime
+    # + ./backends/openvino (intel). Keeping it out of this file means
+    # the same source tree builds all three variants without divergent
+    # lock state. See services/embedder/Dockerfile.
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_embedder"]
+
+[project.scripts]
+baba-embedder = "baba_embedder.__main__:main"

@@ -1,0 +1,55 @@
+# Caddy reverse proxy override for BABA.
+#
+# Apply with:
+#   docker compose -f docker-compose.yml -f deploy/caddy/docker-compose.caddy.yml up -d
+#
+# What this adds / changes vs the base compose:
+#   - new `caddy` service that owns ports 80 + 443 on the docker host
+#   - removes the host port bind on `api` (was 8080 by default) so the
+#     only public-facing service is Caddy
+#   - removes the host port bind on `web` (was 5173) for the same reason
+#   - persists Caddy data + config under ${BABA_STATE_HOST}/caddy so
+#     ACME certs survive container restarts
+
+services:
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: baba-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"  # HTTP/3
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${BABA_STATE_HOST}/caddy/data:/data
+      - ${BABA_STATE_HOST}/caddy/config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        # web is a Vite dev server with no built-in healthcheck;
+        # service_started is enough — Caddy will keep retrying upstream
+        # until web answers.
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # Drop the public port bindings — Caddy handles all ingress now.
+  # The api and web services keep listening internally on their
+  # default ports; Caddy reaches them via the docker network.
+  api:
+    ports: !reset []
+    # Behind a proxy the api sees only the proxy's IP, so unless that proxy is
+    # named here every client shares ONE login bucket — five bad attempts from
+    # anyone lock out the world.
+    environment:
+      BABA_TRUSTED_PROXIES: caddy
+
+  web:
+    ports: !reset []

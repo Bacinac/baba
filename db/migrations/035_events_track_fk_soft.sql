@@ -1,0 +1,15 @@
+-- Make events.track_id a soft pointer. The event-manager now pre-allocates
+-- the track UUID when it first sees a new local_track_id and stamps it into
+-- zone_enter/zone_exit/zone_dwell events as they fire — but the matching
+-- tracks row is only INSERTed at finalize time. With the FK in place every
+-- in-flight zone event hit a ForeignKeyViolationError because the parent
+-- row didn't exist yet, which is exactly the "outside all zones" symptom
+-- on the Sightings page (events succeeded only as track_id=NULL, before we
+-- started stamping).
+--
+-- Dropping the FK is intentional: events are append-only audit rows, we
+-- never CASCADE-DELETE on tracks anyway (the prior SET NULL action would
+-- only fire if someone manually deleted a track), and the soft-pointer
+-- semantics match how the rest of the schema treats track UUIDs (search
+-- joins are LEFT JOIN with a fallback).
+ALTER TABLE events DROP CONSTRAINT IF EXISTS events_track_id_fkey;

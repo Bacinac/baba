@@ -1,0 +1,37 @@
+# BABA Caddy reverse proxy.
+#
+# Replace `baba.example.com` with your real hostname. Caddy will fetch
+# a TLS cert from Let's Encrypt on first request and renew it
+# automatically — no extra steps required as long as port 80 is open
+# for the HTTP-01 challenge.
+#
+# Two services sit behind this proxy:
+#   - the SvelteKit web app (port 5173 inside the container)
+#   - the FastAPI api (port 8080 inside the container)
+#
+# We route `/api/*` to api with the prefix stripped, and everything else
+# to web. The api's WebSocket endpoints (`/ws/*`) live under that prefix
+# too — Caddy handles WS upgrades transparently.
+
+baba.example.com {
+    # Pass real client IP to api so the rate limiter (see services/api/
+    # baba_api/rate_limit.py) honours one-IP-per-minute correctly.
+    # X-Real-IP is set by reverse_proxy by default; X-Forwarded-For is
+    # what the limiter prefers, but the api falls back to either.
+    encode gzip zstd
+
+    @api path /api/*
+    handle @api {
+        # Strip the `/api` prefix so FastAPI sees `/cameras` not
+        # `/api/cameras` (matches the dev SvelteKit proxy config).
+        uri strip_prefix /api
+        reverse_proxy api:8080
+    }
+
+    handle {
+        # SvelteKit dev server. For production you'd want to swap this
+        # for the built static assets served by a `node build` artifact;
+        # the docker-compose stays dev-mode for now.
+        reverse_proxy web:5173
+    }
+}

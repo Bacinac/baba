@@ -1,0 +1,98 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.venv/
+venv/
+.uv-cache/
+
+.env
+.env.*
+!.env.example
+*.secret
+
+models/*.onnx
+models/*.engine
+models/*.xml
+models/*.bin
+models/cache/
+
+media/
+!media/.gitkeep
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+node_modules/
+.svelte-kit/
+build/
+.DS_Store
+
+*.log
+logs/
+
+# model weights anywhere under models/ (keep the small *.config.json)
+models/**/*.onnx
+models/**/*.engine
+models/**/*.xml
+models/**/*.bin
+models/_eval/
+
+# agent/editor tooling
+.claude/
+
+# app revision stamp — git-derived (scripts/gen-revision.sh), never committed
+revision.json
+# staged by deploy.sh on the target, promoted only once the deploy is healthy
+revision.json.pending
+
+# runtime state (postgres data dir, NATS jetstream)
+state/
+
+# DR backup archives (scripts/backup.sh default output dir)
+backups/
+
+# go2rtc runtime config — go2rtc persists API-added streams (with camera
+# RTSP credentials) back into this file, so it holds secrets and must not be
+# tracked. Seeded from go2rtc.example.yaml by install.sh on first run.
+go2rtc.yaml
+
+# GitHub PAT (write:packages) for scripts/release.sh — never committed
+.gh-token
+
+# BABA demo blur assets — instance-specific (his cameras/property). Tool (blur.py)
+# is generic; regions + stills are his layout, kept local.
+demo/stills/
+demo/regions.json
+
+# BABA demo instance data — real name map + recorded fixtures (never public)
+demo/anon-fixtures.json
+demo/api-fixtures.json
+demo/api-fixtures*.json
+
+# Demo build output — embeds fixtures + assets; never tracked (public-repo hazard)
+web/demo-dist/
+demo/media/
+.deploy.lock
+.deploy.lock.*
+.deploy.background.log
+
+# Python wheels / sdists are never vendored — installed from the index in each
+# Dockerfile. Keeps stray `pip download` output out of the repo (BABA-14).
+*.whl
+/*.tar.gz
+
+# Internal working docs (reviews, roadmap, research spikes, Claude instructions)
+# — kept on disk for local use, not part of the public repo.
+/CLAUDE.md
+/CODE_REVIEW_*.md
+/APP_REVIEW_*.md
+/ROADMAP.md
+/research/
+
+# Deployment inventory of the live installations; deploy/hosts.conf.example is the template.
+/deploy/hosts.conf

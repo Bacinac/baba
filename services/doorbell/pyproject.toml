@@ -1,0 +1,20 @@
+[project]
+name = "baba-doorbell"
+version = "0.1.0"
+description = "Reolink doorbell button → doorbell_press event (Baichuan push)"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "asyncpg>=0.30",
+    "reolink-aio>=0.11",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_doorbell"]
+
+[project.scripts]
+baba-doorbell = "baba_doorbell.__main__:main"

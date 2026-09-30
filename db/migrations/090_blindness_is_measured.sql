@@ -1,0 +1,21 @@
+-- Blindness stopped being an appearance, so its reference crops are gone.
+--
+-- `blinded` was taught the way every other state is taught: a handful of black
+-- crops captured during the dark hour. Nearest-neighbour has no notion of "this
+-- reference means there was nothing to see", so the label competed on looks and
+-- won whenever the picture happened to be dark. West P1 watches a black car
+-- parked two metres from the lens: on 31.08, under 117 luma of daylight, it
+-- crossed present<->blinded twelve times between 13:19 and 14:50 at distances
+-- of 0.28 to 0.40. A blinded view abstains from the departure vote, so each of
+-- those flips was the place quietly becoming impossible to release.
+--
+-- The evaluator now measures it instead. Across the night of 02.-03.09, read
+-- off the recordings, west's four place regions spread 0.0 to 2.0 in luminance
+-- while the floodlight was off and 9.9 to 63 in every frame that carried a
+-- picture, floodlit night and dawn and midday alike. Nothing has ever been
+-- measured between those two bands.
+--
+-- The states array keeps `blinded` — it is still what the region commits, and
+-- still what the operator declared it may say. Only the teaching is dropped.
+-- The crop files go with the next scene-crop sweep in the state-evaluator.
+DELETE FROM scene_region_prototypes WHERE state_label = 'blinded';

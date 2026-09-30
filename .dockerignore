@@ -1,0 +1,84 @@
+# Build context exclusion for `docker compose build`.
+#
+# Without this file Docker streams the entire repo (including
+# state/postgres/ at mode 700 root-owned and the 1.9 GB models/ dir)
+# into every service's build context. That:
+#   - fails outright when buildx runs as the non-root host user and
+#     hits state/postgres (EACCES on individual files)
+#   - wastes minutes per build streaming gigabytes the Dockerfile
+#     never COPY's anyway (models are mounted at runtime via /models)
+#
+# The list mirrors .gitignore but is more aggressive because the
+# Dockerfiles only ever COPY from core/, backends/, services/, web/,
+# and a handful of top-level files.
+
+# Runtime state — root-owned bind mounts, no Dockerfile needs them.
+state/
+media/
+logs/
+
+# Model weights + compiled caches. Mounted into containers via
+# BABA_MODELS_HOST at runtime; baking them into images would inflate
+# every image by ~2 GB.
+models/*.onnx
+models/*.engine
+models/*.xml
+models/*.bin
+models/cache/
+
+# Python build artefacts (re-generated inside each image).
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+.uv-cache/
+*.egg-info/
+
+# Node — node_modules belongs to the web image, not the host. The
+# web Dockerfile installs deps fresh inside the container's libc, so
+# any host-side node_modules is at best wasted bandwidth, at worst a
+# native-binding mismatch.
+node_modules/
+web/node_modules/
+.svelte-kit/
+web/.svelte-kit/
+web/build/
+
+# Brand masters. Sources for tools/build_brand_assets.py, which runs on the
+# host at authoring time — the shipped derivatives live in web/static/.
+web/brand/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Secrets + local env. CRITICAL: keep .env out of every image so a
+# leaked layer doesn't ship POSTGRES_PASSWORD / BABA_SECRET_KEY / RTSP
+# credentials. Services read env via docker-compose at runtime.
+.env
+.env.*
+*.secret
+
+# Documentation + git noise — neither needed in any image.
+.git/
+.gitignore
+*.md
+!CLAUDE.md
+ROADMAP.md
+ARCHITECTURE.md
+LICENSES.md
+README.md
+deploy/
+
+# Logs that may have leaked into the repo from past runs.
+*.log
+
+# Vendored Python wheels / sdists never belong in an image build context
+# (installed from the index in each Dockerfile) — BABA-14.
+*.whl
+/*.tar.gz

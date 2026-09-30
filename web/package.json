@@ -1,0 +1,33 @@
+{
+  "name": "baba-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite dev --host 0.0.0.0 --port 5173",
+    "build": "svelte-kit sync && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@sveltejs/adapter-node": "^5.5.7",
+    "@sveltejs/kit": "^2.70.3",
+    "@sveltejs/vite-plugin-svelte": "^7.3.1",
+    "@tailwindcss/vite": "^4.3.3",
+    "svelte": "^5.57.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^6.0.3",
+    "vite": "^8.3.1"
+  },
+  "//typescript": "typescript is held at ^6, NOT ^7: @sveltejs/kit 2.70.3 (latest) declares peerOptional typescript ^5.3.3 || ^6.0.0, and so does svelte-check 4.7.6, so TS 7 (the native compiler) fails to resolve. Nothing else blocks it — raise this the moment kit widens that peer range. Verified 2026-09-23.",
+  "devDependencies": {
+    "@sveltejs/adapter-static": "^3.0.10",
+    "@types/node": "^26.6.2",
+    "svelte-check": "^4.7.6",
+    "vitest": "^5.0.2"
+  },
+  "overrides": {
+    "cookie": "^0.7.2"
+  }
+}

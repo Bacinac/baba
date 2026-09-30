@@ -1,0 +1,31 @@
+[project]
+name = "baba-event-manager"
+version = "0.1.0"
+description = "Turns track-level signals from the tracker into durable events"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "asyncpg>=0.30",
+    "nats-py>=2.9",
+    "msgspec>=0.19",
+    "httpx>=0.28",
+    "pillow>=11.0",
+    # NV12→BGR + resize + box draw + JPEG encode for the box-baked thumbnail
+    # captured from the SHM ring (snapshot.py). Same headless build the
+    # tracker/embedder use.
+    "opencv-python-headless>=4.10",
+    # Shapely powers in-polygon tests for zone_enter / zone_exit events.
+    # The C library is bundled in the wheel so no apt install needed —
+    # `pip install shapely` is self-contained on glibc-based images.
+    "shapely>=2.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_event_manager"]
+
+[project.scripts]
+baba-event-manager = "baba_event_manager.__main__:main"

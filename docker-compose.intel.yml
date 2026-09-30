@@ -1,0 +1,69 @@
+# Override compose for BABA_VARIANT=intel.
+#
+# Apply with:
+#   docker compose -f docker-compose.yml -f docker-compose.intel.yml up -d
+# (install.sh wires this in via COMPOSE_FILE when BABA_VARIANT=intel).
+#
+# What this adds on top of the (hardware-neutral) base compose:
+#   - /dev/dri device passthrough so OpenVINO and ffmpeg/QSV/VAAPI can reach
+#     the Intel render node from inside the bridge-networked containers.
+#     Without this, the openvino backend only sees CPU and falls back to
+#     software inference even on a host with an Arc card.
+#   - render group binding so the container user inherits access to
+#     /dev/dri/renderD128. The numeric gid is read from the host via env
+#     (BABA_INTEL_RENDER_GID, default 110 on Ubuntu 24.04).
+#
+# The base no longer declares a GPU reservation (that moved to
+# docker-compose.nvidia.yml), so there is nothing to !reset here — an Intel
+# host runs base + this file, never the nvidia layer.
+#
+# Notes:
+#   - go2rtc already runs network_mode: host so it shares the host's full
+#     /dev access; no override needed for it.
+#   - postgres + nats + web are CPU-only; no GPU passthrough touches them.
+
+x-intel-dri: &intel-dri
+  devices:
+    - /dev/dri:/dev/dri
+  group_add:
+    # The render group gid on the host. Containers run as root by default in
+    # the base images but binding the supplementary group makes non-root
+    # migrations easier later. 110 is the Ubuntu 24.04 default; override per
+    # host with BABA_INTEL_RENDER_GID in .env if different.
+    - "${BABA_INTEL_RENDER_GID:-110}"
+
+services:
+
+  detector:
+    <<: *intel-dri
+
+  embedder:
+    <<: *intel-dri
+
+  tracker:
+    # OSNet ReID runs on the GPU (OpenVINO EP on Intel) — same /dev/dri
+    # passthrough as the other inference services.
+    <<: *intel-dri
+
+  api:
+    # Reference-photo embedder + auto-describe loop run ONNX in-process; they
+    # want OpenVINO EP just like the embedder service does.
+    <<: *intel-dri
+
+  ingestor:
+    # ffmpeg/PyAV uses QSV (h264_qsv / hevc_qsv) and VAAPI for hardware video
+    # decode on Intel hosts. The relevant codecs are baked into the base-intel
+    # image's ffmpeg; the device mount above is what makes them usable.
+    <<: *intel-dri
+
+  state-evaluator:
+    # Scene-state runs DINOv2 few-shot region inference on the GPU (OpenVINO on
+    # Intel) — same /dev/dri passthrough as the other inference services.
+    <<: *intel-dri
+
+  hwstats:
+    # intel_gpu_top reads the Arc's i915 PMU for per-engine busy % — needs
+    # /dev/dri + CAP_PERFMON.
+    <<: *intel-dri
+    cap_add:
+      - PERFMON

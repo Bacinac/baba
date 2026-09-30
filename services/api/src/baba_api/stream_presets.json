@@ -1,0 +1,56 @@
+[
+  {
+    "id": "reolink_rtsp",
+    "label": "Reolink — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/Preview_01_main",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/Preview_01_sub"
+  },
+  {
+    "id": "reolink_flv",
+    "label": "Reolink — HTTP-FLV",
+    "main": "http://{ip}/flv?port=1935&app=bcs&stream=channel0_main.bcs&user={user}&password={pass}",
+    "sub": "http://{ip}/flv?port=1935&app=bcs&stream=channel0_sub.bcs&user={user}&password={pass}"
+  },
+  {
+    "id": "hikvision_rtsp",
+    "label": "Hikvision — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/101",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/Streaming/Channels/102"
+  },
+  {
+    "id": "dahua_rtsp",
+    "label": "Dahua / Amcrest — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/cam/realmonitor?channel=1&subtype=0",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/cam/realmonitor?channel=1&subtype=1"
+  },
+  {
+    "id": "uniview_rtsp",
+    "label": "Uniview — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/media/video1",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/media/video2"
+  },
+  {
+    "id": "tapo_rtsp",
+    "label": "TP-Link Tapo / VIGI — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/stream1",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/stream2"
+  },
+  {
+    "id": "axis_rtsp",
+    "label": "Axis — RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/axis-media/media.amp",
+    "sub": null
+  },
+  {
+    "id": "onvif",
+    "label": "ONVIF",
+    "main": "onvif://{user}:{pass}@{ip}:80",
+    "sub": null
+  },
+  {
+    "id": "generic_rtsp",
+    "label": "RTSP",
+    "main": "rtsp://{user}:{pass}@{ip}:554/{path}",
+    "sub": "rtsp://{user}:{pass}@{ip}:554/{path}"
+  }
+]

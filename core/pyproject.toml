@@ -1,0 +1,24 @@
+[project]
+name = "baba-core"
+version = "0.1.0"
+description = "BABA core types, protocols, and plugin registry"
+requires-python = ">=3.14"
+dependencies = [
+    "numpy>=2.2",
+    "pydantic>=2.10",
+    "msgspec>=0.19",
+    "nats-py>=2.9",
+    "uvloop>=0.22",
+    # localtime.ZoneInfo needs a tz database; a slim service image (the
+    # ingestor) may ship neither system zoneinfo nor it, so carry it here where
+    # the dependency actually lives rather than trust every base image to.
+    "tzdata>=2025.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_core", "src/home_core"]
+exclude = ["src/home_core/tests"]

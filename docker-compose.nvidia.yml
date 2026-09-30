@@ -1,0 +1,54 @@
+# NVIDIA GPU override. The base docker-compose.yml is hardware-neutral (starts
+# on a CPU host out of the box); this layer adds the GPU device reservations
+# for the nvidia variant. install.sh wires it in via COMPOSE_FILE when
+# BABA_VARIANT=nvidia, so `docker compose` picks it up transparently.
+#
+# Anchors can't cross compose files, so the [gpu] reservation is redefined
+# here (ingestor needs [gpu,video] for NVDEC, hwstats [gpu,utility] for
+# nvidia-smi).
+
+x-gpu-nvidia: &gpu-nvidia
+  resources:
+    reservations:
+      devices:
+        - driver: nvidia
+          count: all
+          capabilities: [gpu]
+
+services:
+  detector:
+    deploy: *gpu-nvidia
+  tracker:
+    deploy: *gpu-nvidia
+  embedder:
+    deploy: *gpu-nvidia
+  state-evaluator:
+    deploy: *gpu-nvidia
+  api:
+    deploy: *gpu-nvidia
+  ingestor:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, video]
+  hwstats:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]
+
+  # BABA_MEDIA_HOST on this box resolves over NFS onto a snapshotted ZFS
+  # dataset, so recorder's retention works against the snapshot policy: every
+  # segment it frees stays pinned in each snapshot spanning it. Measured 32 GB
+  # of segments holding ~44 GB of snapshot growth. Detection consumes the live
+  # streams rather than the segments and no service depends on recorder, so it
+  # stays out of the default set here. Bring it up deliberately with
+  # `--profile recording` when a capture is actually wanted.
+  recorder:
+    profiles: ["recording"]

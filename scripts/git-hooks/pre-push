@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# Gate the push on the test suite, then re-stamp revision.json so the running
+# instance reflects exactly what was pushed.
+#
+# The suite is pure-logic and sub-second (tests/run.sh, pytest in a service
+# image): every case in it is a measured incident that DID ship — untyped SQL
+# parameters, a window anchored to now(), an episode opened off one bad face
+# crop. Blocking the push is the point; a red suite means one of those is back.
+#
+# It runs on each commit being pushed, exported on its own, not on the working
+# tree: there a file left out of the commit still turns the suite green, and
+# the commit that ships is not the one that passed. Deploy ships the commit.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+ZERO=0000000000000000000000000000000000000000
+REFS=$(cat)
+
+# The owner's clones also answer to a private pre-publication gate (real names,
+# plates, MACs, secrets) that no commit carries, found through the clone's own
+# config. A push to the owner's account without it is refused, not waved on.
+GATE=$(git config --get publicgate.command || true)
+if [ -n "$GATE" ]; then
+    printf '%s\n' "$REFS" | "$GATE" pre-push "$@"
+else
+    case "$2" in
+        *[:/][Bb]acinac/*) echo "✗ $2 is the owner's and this clone has no publicgate.command — push blocked" >&2; exit 1 ;;
+    esac
+fi
+
+pushed=$(printf '%s\n' "$REFS" | while read -r _ sha _ _; do [ "$sha" = "$ZERO" ] || echo "$sha"; done | sort -u)
+
+export_dir=$(mktemp -d)
+trap 'rm -rf "$export_dir"' EXIT
+# The test containers run unprivileged and read the tree through a mount.
+chmod 755 "$export_dir"
+
+for sha in $pushed; do
+    tree="$export_dir/$sha"
+    mkdir "$tree"
+    "$ROOT/scripts/export-tree.sh" "$sha" | tar -x -C "$tree"
+    sh "$tree/tests/run.sh" || {
+        echo "✗ tests failed on $(git -C "$ROOT" rev-parse --short "$sha") — push blocked (sh tests/run.sh to reproduce)" >&2
+        exit 1
+    }
+done
+
+# Never block the push on a stamp failure.
+"$ROOT/scripts/gen-revision.sh" || true
+exit 0

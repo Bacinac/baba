@@ -1,0 +1,417 @@
+{
+  "_comment": "Synthetic demo content merged by build-demo.sh, keyed by camera SLUG (no instance data). MIRRORS the real production scene-region config (geometry, states, current_state, knobs, colours pulled read-only from prod scene_regions). Prototype thumbnails are BLURRED crops from demo/stills/<slug>.jpg at each region bbox (crop_bbox) — real prod scene_crops are un-anonymised and NEVER copied. Polygons normalised 0..1.",
+  "scene_regions": {
+    "gate": [
+      {
+        "id": "5ced0000-0000-4000-8000-086c1412da51",
+        "name": "Gate",
+        "polygon": [
+          [
+            0.2303,
+            0.48269
+          ],
+          [
+            0.23445,
+            0.64451
+          ],
+          [
+            0.2718,
+            0.6414
+          ],
+          [
+            0.25935,
+            0.48425
+          ]
+        ],
+        "states": [
+          "open",
+          "closed"
+        ],
+        "sample_interval_s": 2,
+        "hysteresis_n": 2,
+        "unknown_margin": 0.4,
+        "color": "#22d3ee",
+        "enabled": true,
+        "created_at": "2026-06-30T11:53:11.160012+00:00",
+        "updated_at": "2026-07-15T08:57:52.601718+00:00",
+        "status": {
+          "current_state": "closed",
+          "current_state_since": "2026-07-24T15:35:37.265448+00:00",
+          "last_eval_at": "2026-07-24T15:50:09.656718+00:00",
+          "last_label_raw": "closed",
+          "last_distance": 0.2548
+        },
+        "prototypes": [
+          {
+            "id": "5ced0000-0000-4000-8000-dbd654700c33",
+            "state_label": "open",
+            "captured_at": "2026-06-30T11:54:07.201519+00:00",
+            "crop_bbox": [
+              0.2303,
+              0.4827,
+              0.2718,
+              0.6445
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-2cfb4912ae83",
+            "state_label": "open",
+            "captured_at": "2026-06-30T11:54:13.816001+00:00",
+            "crop_bbox": [
+              0.2383,
+              0.4907,
+              0.2638,
+              0.6365
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-84b86c4ede0e",
+            "state_label": "closed",
+            "captured_at": "2026-06-30T11:53:35.937075+00:00",
+            "crop_bbox": [
+              0.2303,
+              0.4827,
+              0.2718,
+              0.6445
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-e69778a2a794",
+            "state_label": "closed",
+            "captured_at": "2026-06-30T11:53:45.810711+00:00",
+            "crop_bbox": [
+              0.2383,
+              0.4907,
+              0.2638,
+              0.6365
+            ]
+          }
+        ]
+      }
+    ],
+    "west": [
+      {
+        "id": "5ced0000-0000-4000-8000-2fb18b978b21",
+        "name": "P1",
+        "polygon": [
+          [
+            0.6,
+            0.73
+          ],
+          [
+            0.84,
+            0.73
+          ],
+          [
+            0.84,
+            0.98
+          ],
+          [
+            0.6,
+            0.98
+          ]
+        ],
+        "states": [
+          "present",
+          "empty"
+        ],
+        "sample_interval_s": 8,
+        "hysteresis_n": 3,
+        "unknown_margin": 0.4,
+        "color": "#22d3ee",
+        "enabled": true,
+        "created_at": "2026-07-14T08:12:06.473051+00:00",
+        "updated_at": "2026-07-18T08:00:09.509029+00:00",
+        "status": {
+          "current_state": "present",
+          "current_state_since": "2026-07-21T15:28:16.841841+00:00",
+          "last_eval_at": "2026-07-24T15:50:02.530089+00:00",
+          "last_label_raw": "present",
+          "last_distance": 0.3051
+        },
+        "prototypes": [
+          {
+            "id": "5ced0000-0000-4000-8000-f03e010d8ab5",
+            "state_label": "present",
+            "captured_at": "2026-07-18T08:01:41.557451+00:00",
+            "crop_bbox": [
+              0.6,
+              0.73,
+              0.84,
+              0.98
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-33f74801ada3",
+            "state_label": "present",
+            "captured_at": "2026-07-18T08:01:42.696789+00:00",
+            "crop_bbox": [
+              0.608,
+              0.738,
+              0.832,
+              0.972
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-6f48967217cb",
+            "state_label": "empty",
+            "captured_at": "2026-07-18T08:01:45.623638+00:00",
+            "crop_bbox": [
+              0.6,
+              0.73,
+              0.84,
+              0.98
+            ]
+          }
+        ]
+      },
+      {
+        "id": "5ced0000-0000-4000-8000-0101bf221d56",
+        "name": "P2",
+        "polygon": [
+          [
+            0.635,
+            0.41
+          ],
+          [
+            0.71,
+            0.41
+          ],
+          [
+            0.71,
+            0.55
+          ],
+          [
+            0.635,
+            0.55
+          ]
+        ],
+        "states": [
+          "present",
+          "empty"
+        ],
+        "sample_interval_s": 8,
+        "hysteresis_n": 3,
+        "unknown_margin": 0.4,
+        "color": "#22d3ee",
+        "enabled": true,
+        "created_at": "2026-07-14T09:27:34.464298+00:00",
+        "updated_at": "2026-07-18T08:16:40.493+00:00",
+        "status": {
+          "current_state": "present",
+          "current_state_since": "2026-07-24T15:35:58.828837+00:00",
+          "last_eval_at": "2026-07-24T15:50:02.546181+00:00",
+          "last_label_raw": "present",
+          "last_distance": 0.2311
+        },
+        "prototypes": [
+          {
+            "id": "5ced0000-0000-4000-8000-a6e2b0b016c5",
+            "state_label": "present",
+            "captured_at": "2026-07-18T08:17:01.427355+00:00",
+            "crop_bbox": [
+              0.635,
+              0.41,
+              0.71,
+              0.55
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-eb1778f81a1b",
+            "state_label": "present",
+            "captured_at": "2026-07-18T08:17:02.32046+00:00",
+            "crop_bbox": [
+              0.643,
+              0.418,
+              0.702,
+              0.542
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-f6b2688c496d",
+            "state_label": "empty",
+            "captured_at": "2026-07-18T08:17:06.050892+00:00",
+            "crop_bbox": [
+              0.635,
+              0.41,
+              0.71,
+              0.55
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-7ee02138b6fd",
+            "state_label": "empty",
+            "captured_at": "2026-07-18T08:17:06.990793+00:00",
+            "crop_bbox": [
+              0.643,
+              0.418,
+              0.702,
+              0.542
+            ]
+          }
+        ]
+      },
+      {
+        "id": "5ced0000-0000-4000-8000-1b0ed5f70e58",
+        "name": "P3",
+        "polygon": [
+          [
+            0.56,
+            0.18
+          ],
+          [
+            0.68,
+            0.18
+          ],
+          [
+            0.68,
+            0.37
+          ],
+          [
+            0.56,
+            0.37
+          ]
+        ],
+        "states": [
+          "present",
+          "empty"
+        ],
+        "sample_interval_s": 8,
+        "hysteresis_n": 3,
+        "unknown_margin": 0.4,
+        "color": "#f59e0b",
+        "enabled": true,
+        "created_at": "2026-07-14T10:45:20.174605+00:00",
+        "updated_at": "2026-07-14T10:45:20.174605+00:00",
+        "status": {
+          "current_state": "empty",
+          "current_state_since": "2026-07-18T03:09:05.296855+00:00",
+          "last_eval_at": "2026-07-24T15:50:02.496533+00:00",
+          "last_label_raw": "empty",
+          "last_distance": 0.1271
+        },
+        "prototypes": [
+          {
+            "id": "5ced0000-0000-4000-8000-16ec0dadb520",
+            "state_label": "present",
+            "captured_at": "2026-07-14T10:46:05.010042+00:00",
+            "crop_bbox": [
+              0.56,
+              0.18,
+              0.68,
+              0.37
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-5e9269251d01",
+            "state_label": "empty",
+            "captured_at": "2026-07-14T10:49:22.27879+00:00",
+            "crop_bbox": [
+              0.56,
+              0.18,
+              0.68,
+              0.37
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-6bbdc7deda1e",
+            "state_label": "empty",
+            "captured_at": "2026-07-14T17:34:09.365183+00:00",
+            "crop_bbox": [
+              0.568,
+              0.188,
+              0.672,
+              0.362
+            ]
+          }
+        ]
+      },
+      {
+        "id": "5ced0000-0000-4000-8000-25d4ad515e19",
+        "name": "P4",
+        "polygon": [
+          [
+            0.328,
+            0.185
+          ],
+          [
+            0.405,
+            0.185
+          ],
+          [
+            0.405,
+            0.375
+          ],
+          [
+            0.328,
+            0.375
+          ]
+        ],
+        "states": [
+          "present",
+          "empty"
+        ],
+        "sample_interval_s": 8,
+        "hysteresis_n": 3,
+        "unknown_margin": 0.4,
+        "color": "#22d3ee",
+        "enabled": true,
+        "created_at": "2026-07-15T17:23:37.76111+00:00",
+        "updated_at": "2026-07-15T18:15:19.334587+00:00",
+        "status": {
+          "current_state": "empty",
+          "current_state_since": "2026-07-23T18:23:45.253054+00:00",
+          "last_eval_at": "2026-07-24T15:50:02.51227+00:00",
+          "last_label_raw": "empty",
+          "last_distance": 0.1087
+        },
+        "prototypes": [
+          {
+            "id": "5ced0000-0000-4000-8000-e891c5d24861",
+            "state_label": "present",
+            "captured_at": "2026-07-15T18:14:07.562628+00:00",
+            "crop_bbox": [
+              0.328,
+              0.185,
+              0.405,
+              0.375
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-a7c90e41e231",
+            "state_label": "present",
+            "captured_at": "2026-07-15T18:14:08.372004+00:00",
+            "crop_bbox": [
+              0.336,
+              0.193,
+              0.397,
+              0.367
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-94cbf3c9e136",
+            "state_label": "empty",
+            "captured_at": "2026-07-15T17:23:51.024702+00:00",
+            "crop_bbox": [
+              0.328,
+              0.185,
+              0.405,
+              0.375
+            ]
+          },
+          {
+            "id": "5ced0000-0000-4000-8000-e67764a97df7",
+            "state_label": "empty",
+            "captured_at": "2026-07-15T17:24:37.035678+00:00",
+            "crop_bbox": [
+              0.336,
+              0.193,
+              0.397,
+              0.367
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

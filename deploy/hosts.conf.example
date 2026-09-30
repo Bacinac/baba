@@ -1,0 +1,39 @@
+# BABA deployment inventory. Copy this file to deploy/hosts.conf (git-ignored)
+# and list your own instances there.
+#
+# One line per instance; `deploy/deploy.sh <name>` (or `all`) reads only this
+# file, so adding a box is a line here, never a new script. Blank lines and
+# `#` comments are ignored.
+#
+#   name      short handle you pass to deploy.sh
+#   ssh       ssh target (user@host, or an alias from ~/.ssh/config)
+#   variant   nvidia | intel | cpu — picks the base image + compose override
+#   path      BABA checkout on that host
+#   flags     comma-separated, or `-` for none:
+#               park — stop the stack once the health gate has passed. For an
+#                 instance that exists to prove the variant still builds and
+#                 comes up, not to serve: it stays current with every deploy
+#                 without holding a GPU it is not using. `restart: unless-stopped`
+#                 keeps it down until the next deploy or an explicit `up`.
+#               recreate_shm — drop the tmpfs SHM volume during the restart.
+#                 Docker's copy-up clobbers its 1777 mode when an older image
+#                 attaches first, and the pipeline then goes blind with
+#                 PermissionError on /baba_cam_*. Needed wherever that has
+#                 bitten; harmless elsewhere (the volume is recreated empty).
+#
+# Source always ships from the deploying checkout (git archive); hosts never
+# pull for themselves. Per-host git credentials rot silently, and that is not a
+# hypothetical: the nvidia box was rebuilt as an LXC, lost its keys, and sat
+# eight commits behind while it still looked like part of the fleet. deploy.sh
+# refuses to run unless the deploying checkout matches origin/main, so the
+# authority is still the pushed branch — only the transport is local.
+#
+# ORDER MATTERS. `deploy.sh all` deploys the first line here in front of you
+# and lets the rest carry on in the background, so the list runs from what is
+# most expensive to leave stale to what is least. Production first; a reference
+# box that exists to prove the variant still builds can catch up on its own
+# time. Naming instances explicitly keeps them all in the foreground.
+#
+# name    ssh                     variant  path              flags
+home      root@192.0.2.10         nvidia   /srv/baba         -
+cabin     cabin-baba              intel    /srv/baba         recreate_shm

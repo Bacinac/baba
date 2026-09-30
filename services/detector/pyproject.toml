@@ -1,0 +1,27 @@
+[project]
+name = "baba-detector"
+version = "0.1.0"
+description = "Shared batched detector — transformer detection via a pluggable inference backend"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "baba-backend-onnxruntime",
+    "nats-py>=2.9",
+    "msgspec>=0.19",
+    "numpy>=2.2",
+    "asyncpg>=0.30",
+    "opencv-python-headless>=4.10",
+]
+
+[project.optional-dependencies]
+nvidia = ["baba-backend-tensorrt"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_detector"]
+
+[project.scripts]
+baba-detector = "baba_detector.__main__:main"

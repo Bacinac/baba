@@ -1,0 +1,19 @@
+[project]
+name = "baba-recorder"
+version = "0.1.0"
+description = "Continuous segment recording per camera, DB-driven"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "asyncpg>=0.30",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_recorder"]
+
+[project.scripts]
+baba-recorder = "baba_recorder.__main__:main"

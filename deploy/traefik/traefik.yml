@@ -1,0 +1,36 @@
+# Traefik v3 static config. Auto-discovers Docker labels.
+#
+# Set acme.email below to a real address before bringing the stack up
+# — Let's Encrypt requires it for expiry notices.
+
+api:
+  dashboard: false  # don't expose the Traefik dashboard publicly
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+    http3: {}
+
+providers:
+  docker:
+    exposedByDefault: false  # only services with traefik.enable=true are routed
+    network: baba_default    # the docker-compose default network
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: you@example.com
+      storage: /letsencrypt/acme.json
+      httpChallenge:
+        entryPoint: web
+
+log:
+  level: INFO

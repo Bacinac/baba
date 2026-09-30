@@ -1,0 +1,32 @@
+-- recordings.width / recordings.height were speculative from birth.
+--
+-- Migration 005 introduced them beside `codec` as "source media metadata
+-- captured from the stream when possible". Only `codec` ever earned that:
+-- the clip endpoint decides `reencode = codec not in H264`, so a blank codec
+-- force-transcodes a whole clip — a consequence real enough that codec also
+-- got a per-session probe, sibling inheritance and a dominant-codec backfill.
+--
+-- Nothing ever asked for the dimensions. The recorder's ffprobe requests only
+-- `stream=codec_name` (adding width,height there would have been the same
+-- call, at the same cost), no query reads either column, and `git log -S` over
+-- services/recorder/ finds no commit that ever wrote them: 0 of 10318 rows on
+-- the live .11 are populated. Dropping them loses nothing, because there has
+-- never been anything in them.
+--
+-- The rule that separates them from `codec`, and the one to apply if this ever
+-- comes back: cache a fact about a media file in the DB when it is read in
+-- BULK or on a hot path (codec is scanned across every segment of a clip
+-- window), and probe the file when it is read once on a cold path. The only
+-- caller that wants dimensions today — scene-state prototype capture from a
+-- recorded moment (`_frame_from_recording`) — needs them once per operator
+-- click, where a ~30ms ffprobe of the actual file is both cheaper than the
+-- schema and authoritative in a way a cached copy never is.
+--
+-- Keeping them instead would have been the worst of both: 10318 legacy rows
+-- could only be backfilled by ffprobing 10318 files, so every consumer would
+-- have to carry an "if NULL then probe" branch forever — a cache nobody is
+-- allowed to trust. If a future feature needs these in bulk, add them back
+-- together with the writer that fills them, in one change.
+ALTER TABLE recordings
+    DROP COLUMN IF EXISTS width,
+    DROP COLUMN IF EXISTS height;

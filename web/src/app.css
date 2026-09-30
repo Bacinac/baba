@@ -1,0 +1,79 @@
+@import "tailwindcss";
+@import "./lib/kit/tokens.css";
+/* Under Tailwind's utilities, so a class on an element still has the last word
+   over the kit's document defaults. */
+@import "./lib/kit/base.css" layer(base);
+
+/* Class-based dark mode. <html class="dark"> activates dark colors. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* BABA's palette, in the names the kit paints with; `faint` and `on-accent` are
+   BABA's own. Brand cyan of the BABA wordmark is one token for the mark and for
+   every interactive/selected surface. The mark's own #02d8fc only clears 1.9:1
+   on a near-white page, so the light theme runs a darkened cyan (5.0:1 as text,
+   5.4:1 under white) and .dark restores the literal brand value. */
+:root {
+  --bg:        oklch(98%   0.003 250);
+  --surface:   oklch(96%   0.004 250);
+  --surface-2: oklch(93%   0.005 250);
+  --border:    oklch(86%   0.006 250);
+  --text:      oklch(22%   0.01  250);
+  --muted:     oklch(45%   0.01  250);
+  --faint:     oklch(62%   0.008 250);
+  --accent:    #0e7490;
+  --on-accent: #ffffff;
+  --ok:        oklch(59.6% 0.145 163.225);
+  --warn:      oklch(66.6% 0.179 58.318);
+  --danger:    oklch(57.7% 0.245 27.325);
+}
+
+.dark {
+  --bg:        oklch(16%   0.012 250);
+  --surface:   oklch(20%   0.012 250);
+  --surface-2: oklch(25%   0.012 250);
+  --border:    oklch(33%   0.012 250);
+  --text:      oklch(96%   0.005 250);
+  --muted:     oklch(72%   0.008 250);
+  --faint:     oklch(58%   0.008 250);
+  --accent:    #02d8fc;
+  --on-accent: #06121a;
+  --ok:        oklch(76.5% 0.177 163.223);
+  --warn:      oklch(82.8% 0.189 84.429);
+  --danger:    oklch(70.4% 0.191 22.216);
+}
+
+/* Tailwind's type scale is the kit's seven steps, under the kit's names; its
+   own in-between sizes are removed so none can be reached for. Above the top
+   step (text-4xl…) is a glyph fitted to its box, not text. */
+@theme inline {
+  --text-sm: initial;
+  --text-base: initial;
+  --text-lg: initial;
+  --text-3xl: initial;
+  --text-2xs: var(--fs-2xs);
+  --text-2xs--line-height: calc(1 / 0.75);
+  --text-xs: var(--fs-xs);
+  --text-s: var(--fs-s);
+  --text-s--line-height: calc(1 / 0.75);
+  --text-m: var(--fs-m);
+  --text-m--line-height: calc(1.25 / 0.875);
+  --text-l: var(--fs-l);
+  --text-l--line-height: 1.5;
+  --text-xl: var(--fs-xl);
+  --text-2xl: var(--fs-2xl);
+}
+
+/* The same palette as utilities: bg-baba-bg, text-baba-text-muted, … */
+@theme inline {
+  --color-baba-bg:         var(--bg);
+  --color-baba-panel:      var(--surface);
+  --color-baba-panel-2:    var(--surface-2);
+  --color-baba-border:     var(--border);
+  --color-baba-text:       var(--text);
+  --color-baba-text-muted: var(--muted);
+  --color-baba-text-faint: var(--faint);
+  --color-baba-accent:     var(--accent);
+  --color-baba-on-accent:  var(--on-accent);
+}
+
+html, body { height: 100%; }

@@ -1,0 +1,46 @@
+[project]
+name = "baba-api"
+version = "0.1.0"
+description = "BABA REST + WebSocket API: cameras CRUD, events, live stream"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "asyncpg>=0.30",
+    "pydantic>=2.9",
+    "msgspec>=0.19",
+    "nats-py>=2.9",
+    "uvloop>=0.21",
+    "argon2-cffi>=23.1",
+    "pyjwt>=2.10",
+    "httpx>=0.28",
+    "cryptography>=44.0",
+    # python-multipart powers FastAPI's UploadFile parsing for the
+    # reference-photo enrollment endpoint.
+    "python-multipart>=0.0.20",
+    # Reference-photo enrollment: api decodes uploaded JPEG/PNG and runs
+    # the same DINOv2 + face stack the embedder uses, so the curated
+    # embeddings are directly comparable with live-pipeline embeddings.
+    # onnxruntime variant (cpu / gpu / openvino) is chosen by Dockerfile
+    # target — see services/api/Dockerfile.
+    "opencv-python-headless>=4.10",
+    "numpy>=2.0",
+    "pillow>=11.0",
+    # 2FA TOTP: pyotp is the tiny / pure-Python reference impl.
+    # qrcode renders the provisioning URI to SVG (server-side, no JS
+    # lib in the browser) so the operator scans with Google/MS
+    # Authenticator without copy-pasting a base32 string.
+    "pyotp>=2.9",
+    "qrcode>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_api"]
+
+[project.scripts]
+baba-api = "baba_api.__main__:main"

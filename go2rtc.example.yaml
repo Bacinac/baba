@@ -1,0 +1,42 @@
+# go2rtc — RTSP / WebRTC / HLS / MJPEG multiplexer. TEMPLATE.
+#
+# This is the credential-free template checked into git. On first run,
+# install.sh copies it to `go2rtc.yaml` (which is gitignored). go2rtc then
+# owns that runtime file rw and persists streams into it.
+#
+# Streams are NOT defined here. The api service mirrors the `cameras` table
+# into go2rtc's stream registry on startup and on every cameras_changed
+# NOTIFY (see services/api/src/baba_api/go2rtc_sync.py). Adding a camera in
+# the BABA UI immediately exposes it here too — including its RTSP
+# credentials, which is exactly why the runtime go2rtc.yaml must never be
+# committed to version control.
+
+# Listen ports are env-driven (go2rtc ${VAR:default} substitution) so a host
+# already running another go2rtc — e.g. Frigate, which binds 8554/8555 — can
+# coexist by setting BABA_GO2RTC_*_PORT in .env. Defaults match the standalone
+# single-stack deployment.
+# Basic auth on the REST API + web UI. go2rtc runs network_mode:host, so
+# :1984 is reachable on every host interface — without auth any LAN host can
+# GET /api/config and read every camera's plaintext RTSP credentials. The
+# password is required (compose refuses to start without it); every internal
+# client (api go2rtc_sync, snapshot proxy, the web /go2rtc proxy, and this
+# container's healthcheck) presents the same pair.
+api:
+  listen: ":${BABA_GO2RTC_API_PORT:1984}"
+  username: "${BABA_GO2RTC_API_USER:baba}"
+  password: "${BABA_GO2RTC_API_PASSWORD}"
+
+# RTSP auth is not set here: go2rtc runs network_mode:host, so :8554 is on
+# every interface, and the api (the sole writer of go2rtc's config) injects
+# username/password at startup — see
+# Go2RtcSync._ensure_rtsp_auth. The ingestor and recorder present the same
+# credentials in BABA_GO2RTC_RTSP. Loopback is exempt, so the healthcheck
+# still passes.
+rtsp:
+  listen: ":${BABA_GO2RTC_RTSP_PORT:8554}"
+
+webrtc:
+  listen: ":${BABA_GO2RTC_WEBRTC_PORT:8555}"
+
+log:
+  level: info

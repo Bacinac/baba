@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="hr" class="h-full">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.ico?v=20260921" sizes="48x48" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg?v=20260921" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=20260921" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png?v=20260921" />
+    <!-- icon-192/512 are deliberately declared only in the manifest: they carry
+         the tile for launchers, and offering them here would let a 2x display
+         pick the tiled version for the tab. -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=20260921" />
+    <link rel="manifest" href="/site.webmanifest?v=20260921" />
+    <meta name="theme-color" content="#272c31" />
+
+    <title>BABA</title>
+    <script>
+      // Pre-hydration theme apply: avoid flash of wrong theme on first paint.
+      // Mirrors the kit theme.svelte.ts logic but synchronous and dep-free.
+      (function () {
+        try {
+          var t = localStorage.getItem("theme");
+          var dark =
+            t === "dark" ||
+            (!t && true) ||  // historical default = dark
+            (t === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+        } catch (e) { document.documentElement.classList.add("dark"); }
+      })();
+    </script>
+    <!--DEMO_NET-->
+    %sveltekit.head%
+  </head>
+  <body class="h-full antialiased" data-sveltekit-preload-data="hover">
+    <div class="h-full">%sveltekit.body%</div>
+  </body>
+</html>

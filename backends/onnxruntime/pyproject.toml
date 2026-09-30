@@ -1,0 +1,32 @@
+[project]
+name = "baba-backend-onnxruntime"
+version = "0.1.0"
+description = "ONNXRuntime backend for BABA (CPU + GPU fallback, works everywhere)"
+requires-python = ">=3.14"
+# The onnxruntime wheel is NOT a base dependency — installing both
+# `onnxruntime` and `onnxruntime-gpu` into the same venv yields a 1-2 GB
+# duplicate install where both packages overwrite each other's files in
+# `site-packages/onnxruntime/`. The consumer must pick exactly one extra:
+#   ./backends/onnxruntime[cpu]   → onnxruntime
+#   ./backends/onnxruntime[gpu]   → onnxruntime-gpu
+# is_available() / discovery still works either way since they expose the
+# same `onnxruntime` import surface.
+dependencies = [
+    "baba-core",
+    "numpy>=2.2",
+]
+
+[project.optional-dependencies]
+cpu = ["onnxruntime>=1.20"]
+# A CUDA 13 build, matching the CUDA runtime base-nvidia ships.
+gpu = ["onnxruntime-gpu>=1.30"]
+
+[project.entry-points."baba.backends"]
+onnxruntime = "baba_backend_onnxruntime:ONNXRuntimeBackend"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_backend_onnxruntime"]

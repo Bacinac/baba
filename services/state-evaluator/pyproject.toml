@@ -1,0 +1,29 @@
+[project]
+name = "baba-state-evaluator"
+version = "0.1.0"
+description = "Periodic scene-state evaluation: classifies the persistent state of a fixed region (gate open/closed, door up/down) via DINOv2 few-shot prototypes"
+requires-python = ">=3.14"
+dependencies = [
+    "baba-core",
+    "asyncpg>=0.30",
+    "nats-py>=2.9",
+    "numpy>=2.0",
+    "opencv-python-headless>=4.10",
+    "pgvector>=0.3",
+    # Plate reading. MIT code either side; the WEIGHTS are BYOM and download on
+    # first use into <models>/alpr, which is why the image can ship this without
+    # shipping anything non-permissive.
+    "fast-alpr>=0.1",
+    # Inference wheel comes from the baba-backend-* plugin installed by the
+    # Dockerfile target (onnxruntime cpu / gpu / openvino), same as embedder.
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/baba_state_evaluator"]
+
+[project.scripts]
+baba-state-evaluator = "baba_state_evaluator.__main__:main"

@@ -1,0 +1,26 @@
+# gitleaks config for the BABA gate (tests/run.sh). Extends the default rules
+# and allowlists the paths that legitimately carry secret-shaped strings so the
+# scan stays about REAL secrets in source, not local artifacts or fixtures.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Local artifacts, demo/test fixtures, and model-registry keys"
+paths = [
+  '''(^|/)\.git/''',
+  '''(^|/)\.env($|\.)''',
+  '''(^|/)\.gh-token$''',
+  '''(^|/)node_modules/''',
+  '''(^|/)\.svelte-kit/''',
+  '''(^|/)build/''',
+  '''(^|/)models/''',
+  '''(^|/)state/''',
+  '''(^|/)media/''',
+  # Demo data and its built bundle carry synthetic credentials by design.
+  '''(^|/)demo/''',
+  '''(^|/)demo-dist/''',
+  # Test .env fixtures hold dummy secrets so install/reconfigure can be tested.
+  '''(^|/)tests/''',
+  # Model registry: `key="..."` is a model identifier, not an API key.
+  '''core/src/baba_core/face_models\.py$''',
+]
