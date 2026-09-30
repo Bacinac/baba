@@ -96,12 +96,15 @@ registry_login() {
 # runtime device reservations, nothing build-relevant.
 export COMPOSE_FILE=docker-compose.yml
 # Building an image needs none of the runtime secrets, but compose refuses to
-# interpolate without the variables it marks required (POSTGRES_PASSWORD). A
+# interpolate without every variable it marks required (${VAR:?…}). A
 # publishing host is a CHECKOUT, not an instance — it
 # has no .env and should not be given one, or someone will eventually deploy
 # from it by accident. Supply throwaway values for the build only; they never
-# reach an image (they are runtime env, not build args).
-export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-build-only-unused}"
+# reach an image (they are runtime env, not build args). The list is read from
+# the compose file, so a newly required variable cannot break the next publish.
+while read -r _v; do
+    [[ -n "${!_v:-}" ]] || export "$_v=build-only-unused"
+done < <(grep -ohE '\$\{[A-Za-z0-9_]+:?\?' "$COMPOSE_FILE" | sed -E 's/^\$\{([A-Za-z0-9_]+).*/\1/' | sort -u)
 # Compose validates volume specs even for `build`, so every storage path needs
 # a value or it fails with "invalid spec: :/media: empty section between colons".
 for _v in BABA_MODELS_HOST BABA_STATE_HOST BABA_MEDIA_HOST BABA_LOGS_HOST; do
