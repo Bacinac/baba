@@ -15,7 +15,7 @@ U Postavke → Snimanje biraš jedan od dva načina. **Bitno:** oba i dalje snim
 
 ## Klipovi se režu na zahtjev
 
-Ne postoji poseban „snimak eventa". Kad u Aktivnosti klikneš redak, BABA izreže klip iz kontinuiranih segmenata za točan prozor tog trenutka i kešira ga. Zato dolazak i odlazak vozila daju dva kratka klipa iz iste snimke. H.264 kamere se režu bez ponovnog kodiranja (lossless); HEVC se pretvara u H.264. Keš klipova čisti se nakon 6 sati.
+Ne postoji poseban „snimak eventa”. Kad u Aktivnosti klikneš redak, BABA izreže klip iz kontinuiranih segmenata za točan prozor tog trenutka i kešira ga. Zato dolazak i odlazak vozila daju dva kratka klipa iz iste snimke. H.264 kamere se režu bez ponovnog kodiranja (lossless); HEVC se pretvara u H.264. Keš klipova čisti se nakon 6 sati.
 
 ## Dva sloja pohrane
 

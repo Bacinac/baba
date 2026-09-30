@@ -12,7 +12,7 @@ Sve se **liječi samo**: čim se nešto s potisnutog mjesta pomakne, ono trenutn
 
 Postavke → Detekcija drži pragove pipelinea. **Zadano: ne diraj ih.** Postavljeni su na izmjereno, i promjena koja popravi jednu situaciju često pokvari drugu.
 
-Kad ipak diraš, promjena se **primjenjuje odmah**, bez restarta, i vrijedi na cijeli pipeline (nema paralelnih ugođaja vidljivih samo u jednom dijelu). Prazno polje znači „vrijedi zadana vrijednost iz konfiguracije". Vrijednost izvan raspona sustav sam odreže — pragovi su ograničeni jer neki od njih ne popuštaju nego *izvrću* zaštitu ako ih preforsiraš.
+Kad ipak diraš, promjena se **primjenjuje odmah**, bez restarta, i vrijedi na cijeli pipeline (nema paralelnih ugođaja vidljivih samo u jednom dijelu). Prazno polje znači „vrijedi zadana vrijednost iz konfiguracije”. Vrijednost izvan raspona sustav sam odreže — pragovi su ograničeni jer neki od njih ne popuštaju nego *izvrću* zaštitu ako ih preforsiraš.
 
 ## Dva praga praćenja
 

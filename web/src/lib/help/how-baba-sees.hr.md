@@ -6,7 +6,7 @@ Sve što vidiš u aplikaciji izlazi iz jednog toka. Vrijedi ga razumjeti jer obj
 
 1. **Kamera → dekodiranje.** Svaka kamera daje RTSP tok koji BABA dekodira jednom i tu jednu sliku dijeli svemu nizvodno.
 2. **Detektor.** Na svakom kadru transformer-model traži objekte — osobu, vozilo, životinju — i vraća okvir s pouzdanošću. Ovo je *po kadru*: detektor ne zna da je osoba na ovom kadru ista kao na prošlom.
-3. **Tracker.** Povezuje detekcije kroz kadrove u **trackove**: jedna osoba koja se kreće scenom = jedan track, čak i kad je detektor na tren izgubi. Ovdje se rađa pojam „prisustva".
+3. **Tracker.** Povezuje detekcije kroz kadrove u **trackove**: jedna osoba koja se kreće scenom = jedan track, čak i kad je detektor na tren izgubi. Ovdje se rađa pojam „prisustva”.
 4. **Prepoznavanje (re-ID).** Za svaki track BABA računa vektor izgleda tijela (i lica, ako ga vidi). Time povezuje isti subjekt kroz vrijeme i kamere — ista osoba prepoznata kad se vrati, i sutra, u drugoj jakni.
 5. **Event-manager.** Odlučuje što je vrijedno zapisati: ulazak u zonu, zadržavanje, dolazak vozila, kraj posjeta. To puni **Aktivnost**.
 6. **Snimanje.** Teče kontinuirano 24/7 neovisno o detekciji; koliko se te snimke zadrži određuje politika čuvanja (vidi [Snimanje](/help/recording)). Aktivnost je sloj razumijevanja iznad nje.

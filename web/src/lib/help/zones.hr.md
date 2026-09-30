@@ -1,4 +1,4 @@
-Zona je poligon koji crtaš na slici kamere da kažeš „ovdje mi je stalo". Sve zone rade po istom sidru: **stopalo subjekta** — donji centar okvira, mjesto gdje objekt dodiruje tlo. Poligon nacrtan jednom ponaša se isto svugdje gdje se procjenjuje, jer se uvijek pita je li *stopalo* unutra, ne cijela kutija.
+Zona je poligon koji crtaš na slici kamere da kažeš „ovdje mi je stalo”. Sve zone rade po istom sidru: **stopalo subjekta** — donji centar okvira, mjesto gdje objekt dodiruje tlo. Poligon nacrtan jednom ponaša se isto svugdje gdje se procjenjuje, jer se uvijek pita je li *stopalo* unutra, ne cijela kutija.
 
 ## Vrste zona
 
@@ -19,7 +19,7 @@ Parkirna, ulazna i interesna zona po zadanom **ne okidaju na nepomične objekte*
 
 ## Pregled sirovog feeda
 
-Zone editor namjerno prikazuje **sirove detekcije** (izlaz detektora, prije trackera) da vidiš što model govori dok crtaš i kalibriraš. Ono što pipeline već odbacuje — statični fantom, detekcija u ignore zoni — prikazano je sivo i iscrtkano, s razlogom. Sivo znači „ovo ne ide dalje", ne kvar.
+Zone editor namjerno prikazuje **sirove detekcije** (izlaz detektora, prije trackera) da vidiš što model govori dok crtaš i kalibriraš. Ono što pipeline već odbacuje — statični fantom, detekcija u ignore zoni — prikazano je sivo i iscrtkano, s razlogom. Sivo znači „ovo ne ide dalje”, ne kvar.
 
 ---
 
