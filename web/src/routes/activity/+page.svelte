@@ -8,10 +8,9 @@
   } from "$lib/api";
   import { page } from "$app/state";
   import { t, type MessageKey } from "$lib/i18n";
-  import { Picks, Toggle, Tag, formatNumber } from "$lib/kit";
+  import { Hint, Picks, Toggle, Tag, formatNumber } from "$lib/kit";
   import { formatDuration } from "$lib/format";
   import { dt } from "$lib/datetime.svelte";
-  import Hint from "$lib/Hint.svelte";
   import { playback } from "$lib/playback.svelte";
   import Timeline from "$lib/Timeline.svelte";
 
@@ -588,7 +587,7 @@
   <span class="ml-auto text-s text-baba-text-faint">
     {formatNumber(shown.length)} {t("sightings_count_suffix")}
   </span>
-  <Hint text={t("hint_activity_visits")} article="kako-baba-vidi" />
+  <Hint text={t("hint_activity_visits")} article="activity-and-visits" />
 </div>
 
 <!-- Scrubable recording timeline for the selected window -->

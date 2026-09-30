@@ -206,14 +206,15 @@ run_in "$IMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba"
 [ -n "$API_PG_PATHS" ] && run_in "$AIMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba" "$API_PG_PATHS"
 # The web server's own modules, under the Node that serves them.
 docker run --rm -v "$ROOT:/w:ro" --entrypoint node "$WIMG" --test --test-reporter=dot '/w/tests/*.test.mjs'
-# What the web says: every word in both languages, every control named and
-# every text size a step of the kit's scale. The kit's checks resolve
-# svelte/compiler beside the file, so they run from a copy inside the image
-# rather than from a host node_modules.
+# What the web says: every word in both languages, every control named, every
+# text size a step of the kit's scale and every help article whole. The kit's
+# checks resolve svelte/compiler beside the file, so they run from a copy
+# inside the image rather than from a host node_modules.
 docker run --rm -v "$ROOT:/w:ro" --entrypoint node "$WIMG" /w/web/src/lib/i18n/words.mjs
 docker run --rm -v "$ROOT:/w:ro" --entrypoint sh "$WIMG" -c 'cp -r /w/web/src/lib/kit /app/kit \
     && node --test --test-reporter=dot /app/kit/*.test.mjs \
-    && node /app/kit/names.mjs /w/web/src && node /app/kit/type.mjs /w/web/src'
+    && node /app/kit/names.mjs /w/web/src && node /app/kit/type.mjs /w/web/src \
+    && node /app/kit/articles.mjs /w/web/src/lib/help /w/web/src'
 # Types and unit tests, from a copy: svelte-kit sync writes into the project.
 docker run --rm -e npm_config_update_notifier=false -v "$ROOT/web:/w:ro" --entrypoint sh "$WIMG" -c \
     'tar -C /w -c --exclude=./node_modules --exclude=./build --exclude=./demo-dist --exclude=./.svelte-kit . | tar -x -C /app \

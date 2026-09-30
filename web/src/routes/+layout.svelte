@@ -9,6 +9,7 @@
   import TopBar from "$lib/TopBar.svelte";
   import Brand from "$lib/Brand.svelte";
   import { version } from "$lib/version.svelte";
+  import { help } from "$lib/help";
 
   let { children } = $props();
 
@@ -110,6 +111,7 @@
       href: "/account",
       onlogout: logout,
     }}
+    {help}
     version={version.label}
   >
     {#snippet brand()}<Brand />{/snippet}

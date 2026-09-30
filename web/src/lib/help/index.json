@@ -1,0 +1,96 @@
+[
+	{
+		"slug": "how-baba-sees",
+		"group": "concepts",
+		"pages": [
+			"/",
+			"/live"
+		],
+		"title": {
+			"hr": "Kako BABA vidi",
+			"en": "How BABA sees"
+		},
+		"summary": {
+			"hr": "Put od slike kamere do zapisa u Aktivnosti — i zašto BABA ne koristi detekciju pokreta.",
+			"en": "The path from camera image to an Activity entry — and why BABA does not use motion detection."
+		}
+	},
+	{
+		"slug": "activity-and-visits",
+		"group": "concepts",
+		"pages": [
+			"/activity",
+			"/search",
+			"/analytics"
+		],
+		"title": {
+			"hr": "Aktivnost i posjeti",
+			"en": "Activity and visits"
+		},
+		"summary": {
+			"hr": "Što je posjet, zašto vozilo daje dolazak i odlazak, a osoba jedan neprekinut zapis.",
+			"en": "What a visit is, why a vehicle yields an arrival and a departure, and a person one continuous record."
+		}
+	},
+	{
+		"slug": "zones",
+		"group": "concepts",
+		"pages": [
+			"/settings/cameras"
+		],
+		"title": {
+			"hr": "Zone",
+			"en": "Zones"
+		},
+		"summary": {
+			"hr": "Kako crtaš gdje ti je stalo, koje vrste zona postoje i zašto se sve mjeri po stopalu.",
+			"en": "How you draw where you care, the zone kinds, and why everything is measured by the foot."
+		}
+	},
+	{
+		"slug": "identities",
+		"group": "concepts",
+		"pages": [
+			"/identities",
+			"/settings/face-recognition"
+		],
+		"title": {
+			"hr": "Identiteti i prepoznavanje",
+			"en": "Identities and recognition"
+		},
+		"summary": {
+			"hr": "Kako BABA prepoznaje istu osobu kad se vrati — lice, tijelo, i zašto je lice glavni signal.",
+			"en": "How BABA recognises the same person when they return — face, body, and why the face is the strong signal."
+		}
+	},
+	{
+		"slug": "tuning",
+		"group": "operating",
+		"pages": [
+			"/settings/detection"
+		],
+		"title": {
+			"hr": "Ugađanje i fantomi",
+			"en": "Tuning and phantoms"
+		},
+		"summary": {
+			"hr": "Zašto klupa čita kao kamion, kako se to samo popravlja, i kad da uopće diraš pragove.",
+			"en": "Why a bench reads as a truck, how it self-corrects, and when to touch a threshold at all."
+		}
+	},
+	{
+		"slug": "recording",
+		"group": "operating",
+		"pages": [
+			"/settings/storage"
+		],
+		"title": {
+			"hr": "Snimanje i pohrana",
+			"en": "Recording and storage"
+		},
+		"summary": {
+			"hr": "Zašto se snima 24/7 neovisno o detekciji, kako se klipovi režu i kako se čuva prostor.",
+			"en": "Why recording is 24/7 regardless of detection, how clips are cut, and how space is kept."
+		}
+	}
+]

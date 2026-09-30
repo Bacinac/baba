@@ -28,10 +28,6 @@ const families = {
 		where: 'ACTIVITY_RANGES in web/src/lib/playback.svelte.ts',
 		members: () => quotedIn(ROOT, 'web/src/lib/playback.svelte.ts', /ACTIVITY_RANGES = \[([^\]]*)\]/)
 	},
-	help_group: {
-		where: 'HelpArticle.group in web/src/lib/help/content.ts',
-		members: () => quotedIn(ROOT, 'web/src/lib/help/content.ts', /\bgroup: ([^;]*);/)
-	},
 	events_kind: {
 		where: `EventKind in ${EVENT_KINDS}`,
 		members: () => quotedIn(ROOT, EVENT_KINDS, /EventKind = Literal\[([^\]]*)\]/)
