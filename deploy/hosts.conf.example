@@ -20,6 +20,9 @@
 #                 attaches first, and the pipeline then goes blind with
 #                 PermissionError on /baba_cam_*. Needed wherever that has
 #                 bitten; harmless elsewhere (the volume is recreated empty).
+#               demo — once this instance is deployed, rebuild the public demo
+#                 from the frontend that just shipped and publish it
+#                 (deploy/demo.sh). One instance carries it, usually the first.
 #
 # Source always ships from the deploying checkout (git archive); hosts never
 # pull for themselves. Per-host git credentials rot silently, and that is not a

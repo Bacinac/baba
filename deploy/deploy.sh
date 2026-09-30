@@ -209,6 +209,7 @@ deploy_one() {
         else
             echo "   would: ship committed tree → back up + verify the database → snapshot images → build base-$variant + services → up → health-gate → roll back on failure → prune"
         fi
+        [[ ",$flags," == *,demo,* ]] && echo "   would: then rebuild and publish the public demo (deploy/demo.sh)"
         return 0
     fi
     lock_instance "$name"
@@ -319,6 +320,10 @@ EOF
         return 1
     fi
     ok "$name deployed"
+    if [[ ",$flags," == *,demo,* ]]; then
+        say "refreshing the public demo"
+        "$SCRIPT_DIR/demo.sh" || printf '\033[33m⚠ demo refresh FAILED (the deploy above is fine)\033[0m\n' >&2
+    fi
 }
 
 # `all` puts the first instance in the inventory in front of you and lets the
