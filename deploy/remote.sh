@@ -191,7 +191,12 @@ chown -R 1000:1000 state logs models/cache 2>/dev/null || true
 # the api would serve the dev stub forever.
 [ -f revision.json ] || cp revision.json.pending revision.json
 
-docker compose up -d --remove-orphans
+# The firewall admits the compose network by subnet, and `down` may hand the
+# recreated network a different one (172.20 → 172.19 on 01.10): written after
+# `up`, the stale rule drops every client's dial to the bus, the api never turns
+# healthy and `up` fails before the rule is refreshed. So the network is created
+# first, the rule written against it, and only then is anything started.
+docker compose up --no-start --remove-orphans
 
 cat > /etc/systemd/system/baba-nats-fw.service <<EOF
 [Unit]
@@ -210,6 +215,11 @@ EOF
 systemctl daemon-reload
 systemctl enable -q baba-nats-fw.service
 deploy/nats-fw.sh
+
+# A failed `up` (a dependency that never turns healthy) must reach the health
+# gate, which is what reports it and puts the previous images back; under
+# `set -e` it used to end the run there and leave the stack half-started.
+docker compose up -d --remove-orphans || echo "compose up failed — the health gate decides"
 
 # --- 6. health gate ------------------------------------------------------
 # `ps` WITHOUT -a lists only running containers, so a service that died on boot
@@ -262,7 +272,7 @@ if [ -n "$bad" ]; then
         fi
     done
     echo "restored $restored image(s) from :rollback"
-    docker compose up -d --remove-orphans
+    docker compose up -d --remove-orphans || echo "compose up failed on the restored images"
     echo "verifying the restored stack..."
     rb_bad=""
     for _ in $(seq 1 12); do
