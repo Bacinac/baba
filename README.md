@@ -7,6 +7,8 @@ hears everything and remembers everyone. BABA gives a house the same attention.
 It follows people and vehicles on every camera, knows them when they come back
 and keeps a record of what happened where.
 
+**Try it:** [demo-baba.boskovic.biz](https://demo-baba.boskovic.biz), the real interface with a made-up household inside.
+
 ## What it does
 
 It detects people and vehicles on every frame, follows them across the view and
