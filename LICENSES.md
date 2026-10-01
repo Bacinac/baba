@@ -24,7 +24,7 @@ model. Every one of them is licensed for commercial use.
 
 ## Models you bring yourself
 
-BABA never ships or downloads these; you put the weights into
+BABA never ships these and never fetches them unasked; you put the weights into
 `BABA_MODELS_HOST` and select them in Settings or with an environment variable,
 and their license is then yours to satisfy.
 
@@ -35,10 +35,12 @@ and their license is then yours to satisfy.
 - **InsightFace face models** (SCRFD, RetinaFace and the buffalo packs) are for
   non-commercial research only. The Settings page offers them as a swappable
   face stack.
-- **License-plate reading** is optional and reads nothing until you bring the
-  weights. The default plate detector comes from `open-image-models` and is a
-  YOLOv9 derivative, so treat it as GPL-3.0; the text recogniser comes from
-  `fast-plate-ocr`.
+- **License-plate reading** is off until you name both models in
+  `BABA_PLATE_DETECTOR` and `BABA_PLATE_OCR`; the state evaluator then downloads
+  them from their authors' releases on first start. The plate detector comes
+  from `open-image-models` and is a YOLOv9 derivative, so treat it as GPL-3.0;
+  the text recogniser comes from `fast-plate-ocr` and its weights carry no
+  license statement. The code of both libraries is MIT.
 
 ## Runtimes and services
 

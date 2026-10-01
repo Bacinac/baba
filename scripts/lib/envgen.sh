@@ -133,6 +133,16 @@ BABA_FACE_DETECTOR_MODEL=/models/face_yunet.onnx
 BABA_FACE_EMBEDDER_MODEL=/models/face_auraface.onnx
 
 # =========================================================================
+# Plate reading (state evaluator) — BYOM, off while empty
+# =========================================================================
+# Not BABA's to ship: the detector derives from YOLOv9 (GPL-3.0) and the OCR
+# weights carry no licence statement (LICENSES.md). Naming both fetches them
+# from their authors' releases on first start, under terms that are yours.
+# Detector: yolov9_s_608 | yolov9_t_384. OCR: cct_s_v1_global | european_vit_v2.
+BABA_PLATE_DETECTOR=${BABA_PLATE_DETECTOR:-}
+BABA_PLATE_OCR=${BABA_PLATE_OCR:-}
+
+# =========================================================================
 # Event manager
 # =========================================================================
 BABA_EVENT_TRACK_TIMEOUT_MS=5000
@@ -234,6 +244,7 @@ envgen_merge_missing() {
         BABA_DETECTOR_INPUT_SIZE BABA_DEVICE_ID
         BABA_TRACKER_CLASSES BABA_TRACKER_FPS
         BABA_EMBEDDER_MODEL BABA_FACE_DETECTOR_MODEL BABA_FACE_EMBEDDER_MODEL
+        BABA_PLATE_DETECTOR BABA_PLATE_OCR
         BABA_EVENT_TRACK_TIMEOUT_MS BABA_EVENT_MIN_TRACK_LIFETIME_MS
         BABA_EVENT_MIN_OBSERVATIONS BABA_THUMBNAIL_MAX_WIDTH BABA_EVENT_DWELL_MS
         BABA_RECORDER_SEGMENT_SECONDS

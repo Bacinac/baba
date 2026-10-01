@@ -8,7 +8,9 @@ Both are BYOM. The code either side is MIT, but neither project states a licence
 for its trained weights and the detector's are YOLOv9-derived, whose reference
 implementation is GPL-3.0. That is the SCRFD situation again: code and weights
 are separate grants and the second one is the one a customer's lawyer reads. So
-BABA does not ship these; the operator brings them, exactly as with TopoFR.
+BABA does not ship these and fetches them only once the operator names both in
+BABA_PLATE_DETECTOR and BABA_PLATE_OCR; the terms they then come under are the
+operator's, exactly as with TopoFR.
 
 The measurement that shaped this module, taken on this system's own footage
 (west, 25.07 arrival):
@@ -49,10 +51,10 @@ __all__ = [
 # (the detectors derive from YOLOv9, whose reference implementation is
 # GPL-3.0). Licence detail lives in LICENSES.md.
 #
-# Defaults are the measured winners on this property's footage. The s-608
-# detector found the plate on every frame of the measured arrival at
-# 0.88-0.93 — localisation was never the weak link. The GLOBAL OCR model
-# read ZG9420GZ at confidence 1.0 on seven consecutive approach frames;
+# yolov9_s_608 + cct_s_v1_global are the measured winners on this property's
+# footage. The s-608 detector found the plate on every frame of the measured
+# arrival at 0.88-0.93 — localisation was never the weak link. The GLOBAL OCR
+# model read ZG9420GZ at confidence 1.0 on seven consecutive approach frames;
 # the European-specific model, the obvious first guess for Croatian plates,
 # measured WORSE on the same frames (0.77-0.79, one digit wrong on the
 # closest frame).
@@ -161,7 +163,7 @@ def make_plate_stack(
     """Load both models, or return None when they are not present.
 
     Returns None rather than raising because plate reading is optional: a
-    deployment that has not brought the weights should read no plates, not fail
+    deployment that has not named the models should read no plates, not fail
     to start. The caller logs the absence once.
 
     The weights are cached under `<models_dir>/cache`, not `<models_dir>`
@@ -175,6 +177,10 @@ def make_plate_stack(
     than taking the service down: whatever else this process is doing is not
     optional, and plate reading is.
     """
+    if not detector_key and not ocr_key:
+        log.info("plate reading off — BABA_PLATE_DETECTOR and BABA_PLATE_OCR are not set")
+        return None
+
     cache = models_dir / "cache" / "alpr"
     try:
         cache.mkdir(parents=True, exist_ok=True)

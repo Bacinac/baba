@@ -36,11 +36,15 @@ and keeps a record of what happened where.
 
 It detects people and vehicles on every frame, follows them across the view and
 recognises them when they return, on another camera or the next day in a
-different jacket. Zones drawn on the camera view turn movement into events:
-entering, leaving and staying too long, each with its own rules. A zone can be
-drawn as a polygon or by clicking an object and letting SAM2 outline it, and an
-optional AI assistant (Anthropic or OpenAI, with your own key) looks at the view
-and proposes zones and rules.
+different jacket. Licence plates are read from the full-resolution recording,
+with many noisy readings of one car combined into a single plate and matched
+against the vehicles you have enrolled. Plate reading is off until you name its
+two models in `.env`: unlike the rest, they are not permissively licensed (see
+[LICENSES.md](LICENSES.md)). Zones drawn on the camera view turn movement into
+events: entering, leaving and staying too long, each with its own rules. A zone
+can be drawn as a polygon or by clicking an object and letting SAM2 outline it,
+and an optional AI assistant (Anthropic or OpenAI, with your own key) looks at
+the view and proposes zones and rules.
 
 It records every camera around the clock without transcoding, with a timeline to
 scrub, clips cut on demand and retention in tiers. Small visual classifiers
@@ -172,5 +176,6 @@ Required Notice: Copyright (c) 2026 Ivo Bošković
 
 The models BABA ships by default are licensed for commercial use (Apache 2.0,
 MIT). Ultralytics YOLO is not shipped because of its AGPL-3.0 license; you can
-bring your own ONNX model into `BABA_MODELS_HOST`. Details in
+bring your own ONNX model into `BABA_MODELS_HOST`. The licence-plate models are
+not shipped either, and are fetched only once you name them. Details in
 [LICENSES.md](LICENSES.md).

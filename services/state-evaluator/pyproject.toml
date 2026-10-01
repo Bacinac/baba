@@ -10,9 +10,10 @@ dependencies = [
     "numpy>=2.0",
     "opencv-python-headless>=4.10",
     "pgvector>=0.3",
-    # Plate reading. MIT code either side; the WEIGHTS are BYOM and download on
-    # first use into <models>/alpr, which is why the image can ship this without
-    # shipping anything non-permissive.
+    # Plate reading. MIT code either side; the WEIGHTS are BYOM and download
+    # into <models>/cache/alpr only once BABA_PLATE_DETECTOR and BABA_PLATE_OCR
+    # name them, which is why the image can ship this without shipping anything
+    # non-permissive.
     "fast-alpr>=0.1",
     # Inference wheel comes from the baba-backend-* plugin installed by the
     # Dockerfile target (onnxruntime cpu / gpu / openvino), same as embedder.

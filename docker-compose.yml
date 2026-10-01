@@ -957,6 +957,9 @@ services:
       # A missing model file crash-loops the container loudly (fail-loud);
       # scene-state evaluation cannot run without it.
       BABA_STATE_EVALUATOR_MODEL: ${BABA_STATE_EVALUATOR_MODEL:-/models/dinov2-vits14.onnx}
+      # Plate reading, BYOM: off while either is empty (see LICENSES.md).
+      BABA_PLATE_DETECTOR: ${BABA_PLATE_DETECTOR:-}
+      BABA_PLATE_OCR: ${BABA_PLATE_OCR:-}
       # Picks the ONNX execution target (baba_core.onnx_session).
       BABA_VARIANT: ${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}
     volumes:

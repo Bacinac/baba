@@ -1123,11 +1123,11 @@ async def _run() -> None:
     # decodes native recorded frames, and native resolution is the whole point:
     # the plate that reads at 96-183 px in the segment reaches the SHM ring at
     # 45-86 px, the band where one plate produced two dozen different strings.
-    # Optional by design — a deployment that has not brought the weights reads
-    # no plates rather than refusing to start.
+    # Opt-in, because the weights are BYOM (see plate_stack): a deployment that
+    # has not named both models reads no plates rather than refusing to start.
     plate_stack = make_plate_stack(
-        os.environ.get("BABA_PLATE_DETECTOR", "yolov9_s_608"),
-        os.environ.get("BABA_PLATE_OCR", "cct_s_v1_global"),
+        os.environ.get("BABA_PLATE_DETECTOR", "").strip(),
+        os.environ.get("BABA_PLATE_OCR", "").strip(),
         models_dir=Path(os.environ.get("BABA_MODELS_PATH", "/models")),
     )
     plate_reader = (
