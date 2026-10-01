@@ -35,7 +35,7 @@ and keeps a record of what happened where.
 ## What it does
 
 It detects people and vehicles on every frame, follows them across the view and
-recognises them when they return, on another camera or the next day in a
+recognises people when they return, on another camera or the next day in a
 different jacket. Licence plates are read from the full-resolution recording,
 with many noisy readings of one car combined into a single plate and matched
 against the vehicles you have enrolled. Plate reading is off until you name its
@@ -49,17 +49,18 @@ the view and proposes zones and rules.
 It records every camera around the clock without transcoding, with a timeline to
 scrub, clips cut on demand and retention in tiers. Small visual classifiers
 trained from a handful of examples report scene states such as a gate open or a
-garage door up. A photograph is enough to find a person across the whole
-history. Alerts go out by e-mail, Slack, Telegram or webhook. Live view is a
-low-latency WebRTC grid. Video stays on your own network unless you connect an
-outside channel yourself.
+garage door up. A photo searches the whole history for people who look like it.
+Alerts go out by e-mail, Slack, Telegram or webhook. Live view is a low-latency
+WebRTC grid. Video stays on your own network unless you connect an outside
+channel yourself.
 
 ## What sets it apart
 
 BABA runs transformer detectors on the whole frame whether or not anything
-moves, so a person standing still does not disappear, and it recognises people
-by the whole body, so it keeps working through hoods, hats, sunglasses and a
-turned head. Faces are an addition, not the foundation.
+moves, so a person standing still does not disappear. A person is named only by
+the face, the one signal that survives a change of clothes; once named, the
+track keeps the name through a turned head or a pulled-up hood, and appearance
+alone never names anyone.
 
 ## How it works
 
@@ -92,11 +93,11 @@ in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## Technology
 
-RT-DETRv2 and D-FINE for detection, Norfair with OSNet appearance for tracking,
-DINOv2 for re-identification across cameras and days, YuNet and AuraFace for
-faces, SAM2 for zones. FastAPI, NATS, Postgres 18 with pgvector,
-SvelteKit 2 and Svelte 5, go2rtc for live view. TensorRT on NVIDIA, OpenVINO on
-Intel, ONNX Runtime on the CPU. Everything runs in containers.
+RT-DETRv2 and D-FINE for detection, Norfair with OSNet appearance for tracking
+and photo search, YuNet and AuraFace for faces, DINOv2 for scene states, SAM2
+for zones. FastAPI, NATS, Postgres 18 with pgvector, SvelteKit 2 and Svelte 5,
+go2rtc for live view. TensorRT on NVIDIA, OpenVINO on Intel, ONNX Runtime on the
+CPU. Everything runs in containers.
 
 ## Install
 

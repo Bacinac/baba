@@ -126,7 +126,7 @@ BABA_TRACKER_CLASSES=0,1,2,3,5,7,14,15,16
 BABA_TRACKER_FPS=15
 
 # =========================================================================
-# Embedder (DINOv2 body re-ID + AuraFace face re-ID)
+# Embedder (OSNet body appearance + AuraFace face re-ID)
 # =========================================================================
 BABA_EMBEDDER_MODEL=/models/osnet_x0_25_msmt17.onnx
 BABA_FACE_DETECTOR_MODEL=/models/face_yunet.onnx

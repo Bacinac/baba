@@ -2,8 +2,9 @@
 
 Operator drops an image (a frame from another camera, a photo of a person
 or vehicle, a screenshot of an enemy player's car) and the API embeds it
-through the same DINOv2 backend the embedder service uses, then runs a
-kNN over `tracks.embedding` via pgvector's `<=>` cosine operator. The
+through the same body-appearance model the embedder service uses
+(BABA_EMBEDDER_MODEL, OSNet by default), then runs a kNN over
+`tracks.embedding` via pgvector's `<=>` cosine operator. The
 HNSW index built in migration 002 makes this O(log n) instead of a
 sequential scan of the entire track history.
 
