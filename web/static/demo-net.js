@@ -186,7 +186,7 @@
   // Say plainly what this is.
   function banner() {
     const el = document.createElement("div");
-    el.textContent = "DEMO · no backend — anonimizirano, zamućeno; izmjene su lokalne i nestaju na reload";
+    el.textContent = "DEMO · no backend — anonymised and blurred; edits are local and vanish on reload";
     Object.assign(el.style, {
       position: "fixed", left: "0", right: "0", bottom: "0", zIndex: "2147483647",
       padding: "6px 12px", textAlign: "center", pointerEvents: "none",

@@ -269,7 +269,7 @@
     <Stats stats={[
       { label: t("analytics_total_events"), value: total },
       { label: t("analytics_avg_per_hour"), value: formatNumber(avgPerHour, { maximumFractionDigits: avgPerHour < 10 ? 1 : 0 }) },
-      { label: t("analytics_section_by_camera"), value: byCamera?.rows.length ?? 0 },
+      { label: t("analytics_active_cameras"), value: byCamera?.rows.length ?? 0 },
     ]} />
 
     <!-- Hourly histogram (SVG) -->

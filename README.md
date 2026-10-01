@@ -9,6 +9,29 @@ and keeps a record of what happened where.
 
 **Try it:** [demo-baba.boskovic.biz](https://demo-baba.boskovic.biz), the real interface with a made-up household inside.
 
+<p align="center"><img src="docs/screenshots/tour.webp" alt="BABA in the demo: live view, home, activity and analytics" width="100%"></p>
+
+<details>
+<summary>More screenshots</summary>
+
+**Live view:** every camera in one low-latency grid.
+
+![Live view](docs/screenshots/live.webp)
+
+**Home:** the last day's events, recent sightings and the state of every camera.
+
+![Home](docs/screenshots/home.webp)
+
+**Activity:** every sighting on a timeline per camera, filtered by people, vehicles or pets.
+
+![Activity](docs/screenshots/activity.webp)
+
+**Analytics:** events per hour, the busiest cameras and what kind of events they were.
+
+![Analytics](docs/screenshots/analytics.webp)
+
+</details>
+
 ## What it does
 
 It detects people and vehicles on every frame, follows them across the view and

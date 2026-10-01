@@ -394,6 +394,7 @@ export const en = {
 	'analytics_empty': 'No data in the selected window.',
 	'analytics_total_events': 'Total events',
 	'analytics_avg_per_hour': 'Avg per hour',
+	'analytics_active_cameras': 'Cameras with events',
 	'analytics_section_heatmap': 'Movement heatmap',
 	'analytics_heatmap_pick_camera': 'Pick a camera',
 	'analytics_heatmap_empty': 'No data yet — accumulator hasn\'t flushed or the camera is idle.',
