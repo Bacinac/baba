@@ -208,6 +208,9 @@ class SystemInfoOut(BaseModel):
     # boxes — worth showing next to the model rather than inferring from the
     # filename. None until the detector's first snapshot arrives.
     detector_family: str | None
+    # Whether the state evaluator loaded the plate models, which are BYOM and
+    # off until named. None until its first snapshot arrives.
+    plate_reading: bool | None
     auto_describe_enabled: bool
     cookie_secure: bool
     cors_origins: list[str]
@@ -305,10 +308,13 @@ async def get_system_info(request: Request) -> SystemInfoOut:
     aggregator = getattr(request.app.state, "stats_aggregator", None)
     reported = getattr(aggregator, "labels_for", None)
     detector_family = os.environ.get("BABA_DETECTOR_MODEL_FAMILY") or None
+    plate_reading = None
     if callable(reported):
         labels = reported("detector") or {}
         detector_path = labels.get("model") or detector_path
         detector_family = labels.get("family") or detector_family
+        plates = (reported("state-evaluator") or {}).get("plates")
+        plate_reading = None if plates is None else plates == "on"
     return SystemInfoOut(
         api_version=version_string(),
         python_version=sys.version.split()[0],
@@ -318,6 +324,7 @@ async def get_system_info(request: Request) -> SystemInfoOut:
         face_models_present=face_models_present,
         detector_model=detector_path,
         detector_family=detector_family,
+        plate_reading=plate_reading,
         auto_describe_enabled=config.auto_describe_enabled,
         cookie_secure=os.environ.get("BABA_COOKIE_SECURE", "false").lower() in ("1", "true", "yes"),
         cors_origins=list(config.cors_origins),

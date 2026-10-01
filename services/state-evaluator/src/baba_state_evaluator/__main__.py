@@ -1133,6 +1133,7 @@ async def _run() -> None:
     plate_reader = (
         PlateReader(svc.pool, media_root, plate_stack) if plate_stack else None
     )
+    svc._stats.set_label("plates", "on" if plate_stack else "off")
 
     # And the other half of reading a plate at night: while a headlight is
     # drowning the zone there is nothing in the footage to read, so the camera

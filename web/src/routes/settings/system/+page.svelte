@@ -476,6 +476,16 @@
               <span class="text-baba-text-faint">{t("system_field_face_missing")}</span>
             {/if}
           </dd>
+          <dt class="text-baba-text-muted">{t("system_field_plate_models")}</dt>
+          <dd>
+            {#if info.plate_reading === true}
+              <span class="text-emerald-400">● {t("system_field_plate_on")}</span>
+            {:else if info.plate_reading === false}
+              <span class="text-baba-text-faint">{t("system_field_plate_off")}</span>
+            {:else}
+              <span class="text-baba-text-faint">—</span>
+            {/if}
+          </dd>
           <dt class="text-baba-text-muted">{t("system_field_auto_describe")}</dt>
           <dd>{info.auto_describe_enabled ? t("system_field_yes") : t("system_field_no")}</dd>
         </dl>

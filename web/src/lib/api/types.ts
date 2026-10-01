@@ -1231,6 +1231,7 @@ export interface SystemInfo {
   face_models_present: boolean;
   detector_model: string;
   detector_family: string | null;
+  plate_reading: boolean | null;
   auto_describe_enabled: boolean;
   cookie_secure: boolean;
   cors_origins: string[];

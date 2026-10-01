@@ -256,6 +256,7 @@
   // New zone form
   let zoneName = $state("");
   let zoneKind = $state<string>("generic");
+  let plateReading = $state<boolean | null>(null);
   let zoneColor = $state("#f59e0b");
 
   // Per-zone detection rules editor — opens a side panel when the
@@ -325,12 +326,14 @@
     loading = true;
     error = null;
     try {
-      const [cam, zs] = await Promise.all([
+      const [cam, zs, si] = await Promise.all([
         api.getCamera(cameraId),
         api.listZones(cameraId),
+        api.getSystemInfo(),
       ]);
       camera = cam;
       zones = zs;
+      plateReading = si.plate_reading;
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -1385,6 +1388,7 @@
     { value: "parking",    key: "zone_kind_parking" },
     { value: "no_go",      key: "zone_kind_no_go" },
     { value: "interest",   key: "zone_kind_interest" },
+    { value: "alpr",       key: "zone_kind_alpr" },
     { value: "generic",    key: "zone_kind_generic" },
     // Last, and labelled "(ne prati)" / "(don't track)" on purpose: every
     // other kind ADDS events, this one removes them. It sits one line below
@@ -1942,9 +1946,16 @@
                 class="w-full rounded border border-baba-border bg-baba-panel-2 px-2 py-1.5 text-m"
               >
                 {#each KIND_KEYS as k}
-                  <option value={k.value}>{t(k.key)}</option>
+                  {#if k.value === "alpr" && plateReading !== true}
+                    <option value={k.value} disabled>{t("zone_kind_alpr_off")}</option>
+                  {:else}
+                    <option value={k.value}>{t(k.key)}</option>
+                  {/if}
                 {/each}
               </select>
+              {#if zoneKind === "alpr"}
+                <span class="mt-1 block text-s text-baba-text-faint">{t("zone_kind_alpr_hint")}</span>
+              {/if}
             </label>
             <label class="flex items-center gap-2 text-m">
               <span class="text-s text-baba-text-muted">{t("zone_color")}</span>
