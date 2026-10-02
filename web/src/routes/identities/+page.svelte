@@ -6,7 +6,7 @@
     type Feed,
   } from "$lib/api";
   import OpusPeoplePicker from "$lib/OpusPeoplePicker.svelte";
-  import { dialog, plural, Button, Dialog, Picks, Tag, PageHead } from "$lib/kit";
+  import { dialog, plural, Button, Dialog, Picks, Tag, PageActions } from "$lib/kit";
   import { t } from "$lib/i18n";
   import { dt } from "$lib/datetime.svelte";
   import { classLabel } from "$lib/classLabels";
@@ -499,16 +499,12 @@
   });
 </script>
 
-<PageHead sticky={false}>
-  {#snippet aside()}
-    <div class="flex shrink-0 gap-2">
-      {#if sources?.opus}
-        <Button tone="accent" onclick={openOpusModal}>{t("identities_add_opus_button")}</Button>
-      {/if}
-      <Button tone={sources?.opus ? "quiet" : "accent"} onclick={openAddModal}>{t("identities_add_button")}</Button>
-    </div>
-  {/snippet}
-</PageHead>
+<PageActions>
+  {#if sources?.opus}
+    <Button tone="accent" onclick={openOpusModal}>{t("identities_add_opus_button")}</Button>
+  {/if}
+  <Button tone={sources?.opus ? "quiet" : "accent"} onclick={openAddModal}>{t("identities_add_button")}</Button>
+</PageActions>
 
 <div class="mb-4 flex flex-wrap items-center gap-2">
   <Picks picks={CLASS_CHIPS.map((c) => ({ key: c.key, label: t(c.label_key) }))} chosen={[classChip]} onpick={(k) => (classChip = k)} />

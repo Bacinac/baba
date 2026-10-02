@@ -808,7 +808,6 @@ export const hr = {
 	'pref_activity_section': 'Aktivnost',
 	'pref_activity_range': 'Zadani vremenski raspon',
 	'pref_activity_range_desc': 'Raspon koji se prikazuje kad otvoriš stranicu Aktivnost.',
-	'cameras_refresh': 'Osvježi',
 	'cameras_loading': 'Učitavam…',
 	'cameras_empty': 'Nema kamera. Dodaj jednu ispod.',
 	'cameras_status_enabled': 'uključeno',

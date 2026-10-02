@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatNumber, Button, Card, Toggle, PageHead } from "$lib/kit";
+  import { formatNumber, Button, Card, Toggle } from "$lib/kit";
   import { t } from "$lib/i18n";
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
@@ -113,12 +113,6 @@
     if (pollTimer !== null) clearInterval(pollTimer);
   });
 </script>
-
-<PageHead sticky={false}>
-  {#snippet aside()}
-    <Button onclick={refresh}>{t("cameras_refresh")}</Button>
-  {/snippet}
-</PageHead>
 
 <!-- Global live-view overlay toggles: apply to the grid tiles AND the
      per-camera full-stream view. One setting for the whole system. -->

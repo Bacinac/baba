@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api, type BabaUser } from "$lib/api";
-  import { ApiError, PageHead } from "$lib/kit";
+  import { ApiError, PageActions } from "$lib/kit";
   import { auth } from "$lib/auth.svelte";
   import { Button, Card, Field, Notice, dialog, toasts, Tag } from "$lib/kit";
   import { t, type MessageKey } from "$lib/i18n";
@@ -138,13 +138,11 @@
 </script>
 
 <div class="flex w-full max-w-4xl flex-col gap-6">
-  <PageHead sticky={false}>
-    {#snippet aside()}
-      <Button tone="primary" onclick={() => (showAdd = !showAdd)}>
-        {showAdd ? t("users_cancel") : t("users_add")}
-      </Button>
-    {/snippet}
-  </PageHead>
+  <PageActions>
+    <Button tone="primary" onclick={() => (showAdd = !showAdd)}>
+      {showAdd ? t("users_cancel") : t("users_add")}
+    </Button>
+  </PageActions>
 
   {#if showAdd}
     <Card>

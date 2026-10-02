@@ -808,7 +808,6 @@ export const en = {
 	'pref_activity_section': 'Activity',
 	'pref_activity_range': 'Default time range',
 	'pref_activity_range_desc': 'The range shown when you open the Activity page.',
-	'cameras_refresh': 'Refresh',
 	'cameras_loading': 'Loading…',
 	'cameras_empty': 'No cameras yet. Add one below.',
 	'cameras_status_enabled': 'enabled',

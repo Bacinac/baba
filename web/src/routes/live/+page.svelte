@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatNumber, Button, PageHead } from "$lib/kit";
+  import { formatNumber } from "$lib/kit";
   import { t } from "$lib/i18n";
   import { onMount, onDestroy } from "svelte";
   import { api, type Camera, type LiveStatus, type ParkedVehicle } from "$lib/api";
@@ -49,12 +49,6 @@
     if (pollTimer !== null) clearInterval(pollTimer);
   });
 </script>
-
-<PageHead sticky={false}>
-  {#snippet aside()}
-    <Button onclick={refresh}>{t("cameras_refresh")}</Button>
-  {/snippet}
-</PageHead>
 
 {#if loading}
   <p class="text-baba-text-faint">{t("cameras_loading")}</p>
