@@ -46,6 +46,12 @@ python3 "$ROOT/demo/scrub_fixtures.py" "$RECORDING" "$WORK/fixtures.json"
 echo "== building the demo at $(git -C "$ROOT" rev-parse --short HEAD) =="
 "$ROOT/web/build-demo.sh" "$WORK/fixtures.json" "$WORK/site"
 
+echo "== link card =="
+docker run --rm --user "$(id -u):$(id -g)" -v "$ROOT:$ROOT:ro" -v "$WORK/site:$WORK/site" node:24 \
+    node "$ROOT/web/src/lib/kit/linkcard.mjs" "$WORK/site" https://demo-baba.boskovic.biz \
+    "$ROOT/docs/screenshots/social-preview.png" "BABA — live demo" \
+    "A self-hosted NVR that understands what it sees: transformer detection on every frame, person re-identification, face recognition and scene understanding, on your own hardware. A public demo over anonymised recordings."
+
 echo "== deploying to $PROJECT =="
 # Through an env file in the private work dir, not -e: an argument is visible
 # to every process listing for as long as the container runs.
