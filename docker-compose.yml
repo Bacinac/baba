@@ -209,6 +209,10 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-baba}
     volumes:
       - ${BABA_STATE_HOST}:/state
+    # The image declares VOLUME /var/lib/postgresql; left unmounted, every
+    # recreate leaves another anonymous volume behind.
+    tmpfs:
+      - /var/lib/postgresql
     restart: "no"
 
   postgres:
@@ -267,6 +271,10 @@ services:
       # go2rtc persists API-added streams back to this file, so it needs rw.
       # The api service's go2rtc_sync owns the streams section at runtime.
       - ./go2rtc.yaml:/config/go2rtc.yaml
+    # The image declares VOLUME /config; left unmounted, every recreate leaves
+    # another anonymous volume behind.
+    tmpfs:
+      - /config
     restart: unless-stopped
     # /api/streams returns 200 with JSON when go2rtc is alive. The image
     # ships wget via busybox. Since this container runs network_mode:host,

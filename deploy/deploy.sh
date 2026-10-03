@@ -168,11 +168,34 @@ retired_env_keys() {
         | tr -s ' \t' '\n' | sed '/^$/d' | sort -u
 }
 
-rollback_verdict() {
-    local ssh="$1" path="$2" host_rev destructive="" retired m
-    host_rev=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$ssh" \
+host_revision() {
+    local ssh="$1" path="$2" rev
+    rev=$(ssh -n -o BatchMode=yes -o ConnectTimeout=15 "$ssh" \
         "sed -n 's/.*\"sha\": *\"\([^\"]*\)\".*/\1/p' '$path/revision.json' 2>/dev/null" 2>/dev/null || true)
-    if [[ -z "$host_rev" ]] || ! git -C "$REPO_ROOT" cat-file -e "${host_rev}^{commit}" 2>/dev/null; then
+    if [[ -n "$rev" ]] && git -C "$REPO_ROOT" cat-file -e "${rev}^{commit}" 2>/dev/null; then
+        printf '%s\n' "$rev"
+    fi
+}
+
+shipped_files() {
+    bash "$REPO_ROOT/scripts/export-tree.sh" "$1" | tar -t | grep -v '/$' | sort -u
+}
+
+# Shipped by the revision the instance runs, not by HEAD. A path that left the
+# repository by becoming gitignored is the instance's own from then on, so it
+# is never on this list.
+retired_files() {
+    local old new gone
+    old=$(shipped_files "$1") && new=$(shipped_files HEAD) || return 1
+    gone=$(comm -23 <(printf '%s\n' "$old") <(printf '%s\n' "$new"))
+    [[ -n "$gone" ]] || return 0
+    comm -23 <(printf '%s\n' "$gone") \
+        <(printf '%s\n' "$gone" | git -C "$REPO_ROOT" check-ignore --no-index --stdin | sort -u || true)
+}
+
+rollback_verdict() {
+    local host_rev="$1" destructive="" retired m
+    if [[ -z "$host_rev" ]]; then
         printf '%s\t%s\n' "" "the revision this instance is running could not be read, so whether the schema moved is unknown"
         return 0
     fi
@@ -205,9 +228,9 @@ deploy_one() {
     say "$name — $ssh ($variant${flags:+, flags=$flags})"
     if (( DRY_RUN )); then
         if (( PULL )); then
-            echo "   would: ship committed tree → back up + verify the database → snapshot images → pull published images → up → health-gate → roll back on failure → prune"
+            echo "   would: ship committed tree → remove files the repo dropped → back up + verify the database → snapshot images → pull published images → up → health-gate → roll back on failure → prune"
         else
-            echo "   would: ship committed tree → back up + verify the database → snapshot images → build base-$variant + services → up → health-gate → roll back on failure → prune"
+            echo "   would: ship committed tree → remove files the repo dropped → back up + verify the database → snapshot images → build base-$variant + services → up → health-gate → roll back on failure → prune"
         fi
         [[ ",$flags," == *,demo,* ]] && echo "   would: then rebuild and publish the public demo (deploy/demo.sh)"
         return 0
@@ -217,8 +240,9 @@ deploy_one() {
     ssh -o BatchMode=yes -o ConnectTimeout=15 "$ssh" "test -d '$path'" \
         || { printf '\033[31m✗ %s: cannot reach %s, or %s does not exist there\033[0m\n' "$name" "$ssh" "$path" >&2; return 1; }
 
-    local destructive no_rollback verdict
-    verdict="$(rollback_verdict "$ssh" "$path")"
+    local destructive no_rollback verdict host_rev retired
+    host_rev="$(host_revision "$ssh" "$path")"
+    verdict="$(rollback_verdict "$host_rev")"
     IFS=$'\t' read -r destructive no_rollback <<<"$verdict"
     [[ -n "$no_rollback" ]] && say "$name — image rollback disabled: $no_rollback"
 
@@ -230,9 +254,8 @@ deploy_one() {
         # refuses. Everything the instance owns (.env, models, media, state,
         # logs, runtime go2rtc.yaml) is gitignored, so it is excluded by
         # construction rather than by a list that can fall out of date.
-        # Caveat: extraction overwrites, it does not delete. A file removed
-        # from the repo lingers on an archive-synced host until it is cleaned
-        # by hand; nothing imports it, so it is inert.
+        # Extraction only overwrites, so what the repo dropped since the
+        # revision the instance runs is removed right after it.
         # This is also how deploy/remote.sh — the half that runs over there —
         # gets there, so the instance always runs the version of it that belongs
         # to the commit being deployed.
@@ -241,6 +264,20 @@ deploy_one() {
         bash "$REPO_ROOT/scripts/export-tree.sh" HEAD \
             | ssh -o BatchMode=yes -o ConnectTimeout=15 "$ssh" "tar -x -C '$path'" \
             || { printf '\033[31m✗ %s: source sync failed\033[0m\n' "$name" >&2; return 1; }
+
+        if [[ -z "$host_rev" ]]; then
+            say "$name — the running revision is unknown, so files the repo dropped since stay on the host"
+        elif ! retired="$(retired_files "$host_rev")"; then
+            say "$name — the tree at ${host_rev:0:8} cannot be listed, so files the repo dropped since stay on the host"
+        elif [[ -n "$retired" ]]; then
+            say "$name — removing $(wc -l <<<"$retired") file(s) the repo no longer ships"
+            sed 's/^/   /' <<<"$retired"
+            ssh -o BatchMode=yes -o ConnectTimeout=15 "$ssh" "cd '$path' && while IFS= read -r f; do
+                    rm -f -- \"\$f\" || exit 1
+                    d=\$(dirname -- \"\$f\"); [ \"\$d\" = . ] || rmdir -p --ignore-fail-on-non-empty -- \"\$d\" 2>/dev/null || true
+                done" <<<"$retired" \
+                || { printf '\033[31m✗ %s: removing retired files failed\033[0m\n' "$name" >&2; return 1; }
+        fi
 
         # revision.json is git-derived and gitignored, so the archive cannot
         # carry it and the host has no .git to regenerate it from — the About
