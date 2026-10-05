@@ -237,6 +237,7 @@ def test_a_vehicle_at_rest_files_parked_and_its_visit_is_due_a_departure_is_a_ne
         await w.tick(track(4, 700, cls=CAR, motion="parked"))
         assert [e[:3] for e in await w.events()] == [
             ("object_parked", None, 1),
+            ("object_unparked", None, 1),
             ("object_unparked", None, 3),
             ("object_parked", None, 3),
         ]

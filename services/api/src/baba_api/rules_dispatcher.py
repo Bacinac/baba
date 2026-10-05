@@ -33,7 +33,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
-from baba_core.classes import class_id_for_name
 from baba_core.pg_listen import ResilientListener
 from home_core.rate_limit import TokenBucketLimiter
 from home_core.tasks import spawn
@@ -117,19 +116,15 @@ def _build_payload(event: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _fetch_event(pool: asyncpg.Pool, event_id: str) -> dict[str, Any] | None:
-    """Fetch the event row joined with camera name + track class_name/id.
+    """Fetch the event's observed class and camera name.
     The NOTIFY payload only carries id/camera_id/kind/at; we need the
     class for filter matching, and the camera/class names for the
     notification body."""
     row = await pool.fetchrow(
         """
-        SELECT e.id, e.kind, e.at, e.camera_id, e.payload,
-               c.name AS camera_name,
-               t.class_id AS track_class_id,
-               t.class_name AS track_class_name
+        SELECT e.id, e.kind, e.at, e.camera_id, e.payload, c.name AS camera_name
         FROM events e
         JOIN cameras c ON c.id = e.camera_id
-        LEFT JOIN tracks t ON t.id = e.track_id
         WHERE e.id = $1::uuid
         """,
         event_id,
@@ -140,10 +135,8 @@ async def _fetch_event(pool: asyncpg.Pool, event_id: str) -> dict[str, Any] | No
     payload = event.pop("payload")
     if isinstance(payload, str):
         payload = json.loads(payload)
-    if event["track_class_name"] is None:
-        event["track_class_name"] = payload.get("class_name")
-    if event["track_class_id"] is None:
-        event["track_class_id"] = class_id_for_name(event["track_class_name"])
+    event["track_class_name"] = payload.get("class_name")
+    event["track_class_id"] = payload.get("class_id")
     return event
 
 

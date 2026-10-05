@@ -25,12 +25,7 @@ async def list_events(
     until: datetime | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=5000),
 ) -> list[dict[str, Any]]:
-    """List events, newest first. All filters optional.
-
-    Joined with cameras + tracks so the UI gets everything it needs in one
-    call (camera slug/name, track class). Stays under 5000 rows per call —
-    pagination via `until` cursor (use the last item's `at` to page back).
-    """
+    """List event snapshots with camera, track and recording metadata, newest first."""
     pool = request.app.state.pool
     flt = SqlFilter()
 
@@ -65,8 +60,6 @@ async def list_events(
             e.camera_id,
             c.slug AS camera_slug, c.name AS camera_name,
             e.track_id,
-            t.class_name AS track_class_name,
-            t.class_id AS track_class_id,
             t.thumbnail_path AS track_thumbnail_path,
             EXTRACT(EPOCH FROM (t.ended_at - t.started_at))::int AS track_duration_s,
             t.started_at AS track_started_at,
@@ -114,14 +107,13 @@ async def list_events(
                 "start_at": entry.isoformat(),
                 "end_at": exit_.isoformat(),
             }
+        payload = json.loads(r["payload"]) if isinstance(r["payload"], str) else r["payload"]
         out.append(
             {
                 "id": str(r["id"]),
                 "kind": r["kind"],
                 "at": r["at"].isoformat(),
-                "payload": json.loads(r["payload"])
-                if isinstance(r["payload"], str)
-                else r["payload"],
+                "payload": payload,
                 "camera": {
                     "id": str(r["camera_id"]),
                     "slug": r["camera_slug"],
@@ -130,8 +122,8 @@ async def list_events(
                 "track": (
                     {
                         "id": str(r["track_id"]),
-                        "class_id": r["track_class_id"],
-                        "class_name": r["track_class_name"],
+                        "class_id": payload.get("class_id"),
+                        "class_name": payload.get("class_name"),
                         "duration_s": r["track_duration_s"],
                         "thumbnail_path": r["track_thumbnail_path"],
                     }

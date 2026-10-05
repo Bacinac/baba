@@ -1,29 +1,9 @@
-"""Track-lifecycle → durable events.
-
-What this service does in v1:
-1. Subscribe to `baba.tracks.<slug>` NATS messages from the tracker
-2. Keep per-camera, per-local-track-id state (first_seen, last_seen, class,
-   max_confidence, n_observations, last_bbox)
-3. A background sweeper finalizes tracks that haven't been seen for
-   `track_timeout_ms` — meaning the tracker considers them lost and they're
-   no longer in published messages
-4. Finalize = INSERT into `tracks` table + INSERT into `events` table with
-   kind='track_finalized'. Postgres NOTIFY 'events_new' fires automatically
-   via existing trigger, so any /sse/events consumer sees it live.
-
-What this service deliberately doesn't do yet:
-- Zones / polygon membership (next iteration, needs zones schema first)
-- Cross-camera re-ID (needs embedder)
-- Recording clip linking (needs recorder)
-
-These each plug in as additional event kinds without changing this loop.
-"""
+"""Track lifecycle, zone events, identity assignment and durable finalization."""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import copy
 import json
 import logging
 import signal
@@ -32,7 +12,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4, uuid5
+from uuid import UUID, uuid4
 
 import asyncpg
 import msgspec
@@ -45,8 +25,8 @@ from baba_core import (
     drain_quietly,
     setup_logging,
 )
-from baba_core.classes import class_id_for_name
 from baba_core.event_kinds import EventKind
+from baba_core.events import TrackEvent
 from baba_core.face import set_canonical_face
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.parked import parked_assignments
@@ -68,12 +48,14 @@ from baba_event_manager._gating import (
 )
 from baba_event_manager._state import CameraInfo, CameraResolver, TrackState
 from baba_event_manager.config import EventManagerConfig
+from baba_event_manager.events import write_track_event
 from baba_event_manager.face_anchor import (
     FACE_ID_MIN_PX,
     anchor_sql,
     chain_enabled,
     chain_params,
 )
+from baba_event_manager.finalization import FinalizationQueue
 from baba_event_manager.identity_rules import survives_rivals
 from baba_event_manager.live_identity import LiveIdentityMatcher
 from baba_event_manager.naming import Naming, name_track, reference_kind_for_class
@@ -135,18 +117,6 @@ def came_to_rest(
         and cur_state in ("stationary", "parked")
         and not at_frame_edge
     )
-
-
-@dataclass(frozen=True, slots=True)
-class _PendingEvent:
-    """A transition found under the state lock, filed after it is released."""
-
-    kind: EventKind
-    zone_id: Any
-    track_id: int
-    bbox: tuple[float, float, float, float]
-    class_name: str
-    db_track_id: UUID | None = None
 
 
 def _note_observation(rec: TrackState, msg: _TracksMessage, t: TrackWire) -> None:
@@ -223,15 +193,6 @@ class _Closed:
         return datetime.fromtimestamp(self.end_ns / 1e9, tz=UTC)
 
 
-@dataclass(slots=True)
-class _PendingTrack:
-    camera: str
-    local_id: int
-    record: TrackState
-    source: TrackState
-    parked: bool
-
-
 class EventManager:
     def __init__(self, config: EventManagerConfig) -> None:
         self._config = config
@@ -247,8 +208,7 @@ class EventManager:
         # state[camera_slug][local_track_id] = TrackState
         self._state: dict[str, dict[int, TrackState]] = {}
         self._state_lock = asyncio.Lock()
-        self._pending_finalizations: dict[UUID, _PendingTrack] = {}
-        self._finalization_lock = asyncio.Lock()
+        self._finalizations = FinalizationQueue(self._stats)
         self._pool: asyncpg.Pool | None = None
         self._resolver = CameraResolver()
         self._zones: ZonesResolver | None = None
@@ -425,12 +385,11 @@ class EventManager:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
-        # Finalize all in-flight tracks on shutdown so we don't drop them.
-        await self._finalize_all_pending()
-        await self._stats.stop()
-        await drain_quietly(self._nc)
         if self._listener is not None:
             await self._listener.stop()
+        await self._stats.stop()
+        await drain_quietly(self._nc)
+        await self._finalize_all_pending()
         await self._thumbs.close()
         self._snapshot_baker.close()
         await self._pool.close()
@@ -622,33 +581,18 @@ class EventManager:
         self._zone_event_last_ns[key] = now_ns
         return True
 
-    async def _emit_zone_event(
-        self, camera_slug: str, kind: EventKind, zone_id: Any, track_id: int,
-        bbox: tuple[float, float, float, float], timestamp_ns: int,
-        class_name: str | None = None, db_track_id: UUID | None = None,
+    async def _emit_track_event(
+        self, camera_slug: str, event: TrackEvent, timestamp_ns: int,
     ) -> None:
         assert self._pool is not None and self._zones is not None
         cam = await self._resolver.get(camera_slug)
         if cam is None:
             return
-        payload: dict[str, Any] = {
-            "bbox": list(bbox), "class_name": class_name,
-            "class_id": class_id_for_name(class_name), "track_id": str(track_id),
-        }
-        if zone_id is not None:
-            zone = self._zones.zone_meta(camera_slug, zone_id)
-            payload.update({
-                "zone_id": str(zone_id), "zone_name": zone.name if zone else None,
-                "zone_kind": zone.kind if zone else None,
-            })
-        event_id = uuid5(cam.id, f"{db_track_id or track_id}:{kind}:{zone_id}:{timestamp_ns}")
-        status = await self._pool.execute(
-            "INSERT INTO events (id, camera_id, track_id, kind, at, payload) "
-            "VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (id) DO NOTHING",
-            event_id, cam.id, db_track_id, kind,
-            datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC), json.dumps(payload),
-        )
-        if status == "INSERT 0 1":
+        zone = self._zones.zone_meta(camera_slug, event.zone_id) if event.zone_id is not None else None
+        if await write_track_event(
+            self._pool, cam.id, event, timestamp_ns,
+            zone_name=zone.name if zone else None, zone_kind=zone.kind if zone else None,
+        ):
             self._stats.incr("events")
 
     async def _observe(self, msg: _TracksMessage) -> None:
@@ -667,7 +611,7 @@ class EventManager:
 
         # Transitions are computed under the state lock and emitted after it
         # is released.
-        pending: list[_PendingEvent] = []
+        pending: list[TrackEvent] = []
         async with self._state_lock:
             cam = self._state.setdefault(msg.camera_id, {})
             # Zero-guard in case an upstream service forgot to forward frame
@@ -679,7 +623,8 @@ class EventManager:
             )
             for t in msg.tracks:
                 rec = self._continued_record(cam, msg, t)
-                parked_closed = self._parked_visit_closed(rec)
+                parked_closed = self._finalizations.parked_visit_closed(rec)
+                departed_motion = None
                 # A vehicle whose visit was closed when it parked, moving again:
                 # that is a departure, and departures are their own visit. Drop
                 # the closed record so a fresh track id and start time are
@@ -689,6 +634,7 @@ class EventManager:
                     and parked_closed
                     and (t.motion_state or "active") == "active"
                 ):
+                    departed_motion = rec.last_motion_state
                     cam.pop(t.track_id, None)
                     rec = None
                     parked_closed = False
@@ -698,6 +644,8 @@ class EventManager:
                 prev_bbox = rec.last_bbox if rec is not None else None
                 if rec is None:
                     rec = cam[t.track_id] = self._open_record(msg, t)
+                    if departed_motion is not None:
+                        rec.last_motion_state = departed_motion
                 else:
                     _note_observation(rec, msg, t)
                 if has_dims:
@@ -729,16 +677,7 @@ class EventManager:
         # the rules dispatcher fan-out happens asynchronously via Postgres
         # NOTIFY.
         for e in pending:
-            await self._emit_zone_event(
-                msg.camera_id,
-                e.kind,
-                e.zone_id,
-                e.track_id,
-                e.bbox,
-                msg.timestamp_ns,
-                e.class_name,
-                e.db_track_id,
-            )
+            await self._emit_track_event(msg.camera_id, e, msg.timestamp_ns)
         if self._snapshot is not None:
             await self._publish_snapshot(msg, cam)
 
@@ -751,11 +690,11 @@ class EventManager:
             for tid, rec in list(cam.items()):
                 if rec.epoch and rec.epoch < msg.epoch:
                     if not rec.parked_finalized:
-                        self._queue_finalization(msg.camera_id, tid, rec)
+                        self._finalizations.enqueue(msg.camera_id, tid, rec)
                     cam.pop(tid)
                     retired = True
         if retired:
-            await self._drain_finalizations()
+            await self._finalizations.drain(self._finalize)
 
     def _continued_record(
         self, cam: dict[int, TrackState], msg: _TracksMessage, t: TrackWire
@@ -882,7 +821,7 @@ class EventManager:
             rec.best_thumb_conf = t.confidence
 
     def _note_motion(
-        self, msg: _TracksMessage, t: TrackWire, rec: TrackState, pending: list[_PendingEvent]
+        self, msg: _TracksMessage, t: TrackWire, rec: TrackState, pending: list[TrackEvent]
     ) -> None:
         """Motion-state transition events.
 
@@ -929,7 +868,7 @@ class EventManager:
         bbox = (t.x1, t.y1, t.x2, t.y2)
         if rest:
             rec.parked_emitted = True
-            pending.append(_PendingEvent("object_parked", None, t.track_id, bbox, t.class_name))
+            pending.append(TrackEvent("object_parked", t.track_id, rec.db_track_id, t.class_id, t.class_name, bbox))
             # A vehicle that has come to rest has finished its arrival, so
             # close the visit here rather than holding the row open for the
             # hours it stands there. That delay was not cosmetic: `tracks` is
@@ -946,7 +885,7 @@ class EventManager:
             if rec.ever_active and t.class_id in VEHICLE_GROUP:
                 rec.park_finalize_due = True
         elif rec.last_motion_state in ("stationary", "parked") and cur_motion == "active":
-            pending.append(_PendingEvent("object_unparked", None, t.track_id, bbox, t.class_name))
+            pending.append(TrackEvent("object_unparked", t.track_id, rec.db_track_id, t.class_id, t.class_name, bbox))
         rec.last_motion_state = cur_motion
 
     def _admitting_zones(
@@ -1017,14 +956,14 @@ class EventManager:
         return frozenset(admitted), dwell_ms, cooldown_s
 
     def _note_zones(
-        self, msg: _TracksMessage, t: TrackWire, rec: TrackState, pending: list[_PendingEvent]
+        self, msg: _TracksMessage, t: TrackWire, rec: TrackState, pending: list[TrackEvent]
     ) -> None:
         current, dwell_ms, cooldown_s = self._admitting_zones(msg, t)
 
         def fire(kind: EventKind, zid: Any) -> None:
             if self._zone_cooldown_ok(zid, t.class_name, kind, cooldown_s.get(zid, 0), msg.timestamp_ns):
                 pending.append(
-                    _PendingEvent(kind, zid, t.track_id, rec.last_bbox, t.class_name, rec.db_track_id)
+                    TrackEvent(kind, t.track_id, rec.db_track_id, t.class_id, t.class_name, rec.last_bbox, zid)
                 )
 
         previous = frozenset(rec.inside_zones)
@@ -1690,21 +1629,6 @@ class EventManager:
             await asyncio.sleep(1.0)
             await self._sweep_once()
 
-    def _parked_visit_closed(self, rec: TrackState | None) -> bool:
-        if rec is None:
-            return False
-        pending = self._pending_finalizations.get(rec.db_track_id)
-        return rec.parked_finalized or (pending is not None and pending.parked)
-
-    def _queue_finalization(self, camera: str, local_id: int, rec: TrackState,
-                            parked: bool = False) -> None:
-        if rec.db_track_id is None:
-            rec.db_track_id = uuid4()
-        if rec.db_track_id not in self._pending_finalizations:
-            self._pending_finalizations[rec.db_track_id] = _PendingTrack(
-                camera, local_id, copy.deepcopy(rec), rec, parked
-            )
-
     async def _sweep_once(self) -> None:
         now_ns = time.time_ns()
         timeout_ns = self._config.track_timeout_ms * 1_000_000
@@ -1713,44 +1637,21 @@ class EventManager:
                 for local_id, rec in list(tracks.items()):
                     if now_ns - rec.last_seen_ns > timeout_ns:
                         if not rec.parked_finalized:
-                            self._queue_finalization(camera, local_id, rec)
+                            self._finalizations.enqueue(camera, local_id, rec)
                         tracks.pop(local_id)
                     elif rec.park_finalize_due:
                         rec.park_finalize_due = False
-                        self._queue_finalization(camera, local_id, rec, parked=True)
-        await self._drain_finalizations()
-
-    async def _drain_finalizations(self) -> None:
-        async with self._finalization_lock:
-            for track_id, item in list(self._pending_finalizations.items()):
-                try:
-                    await self._finalize(item.camera, item.local_id, item.record)
-                except Exception:
-                    log.exception("finalization pending cam=%s tid=%s", item.camera, item.local_id)
-                    continue
-                if item.parked:
-                    item.source.parked_finalized = True
-                    item.source.inside_zones.clear()
-                    item.source.enter_emitted.clear()
-                    item.source.dwell_emitted.clear()
-                self._pending_finalizations.pop(track_id)
-            self._stats.set_gauge("finalization_pending", len(self._pending_finalizations))
+                        self._finalizations.enqueue(camera, local_id, rec, parked=True)
+        await self._finalizations.drain(self._finalize)
 
     async def _finalize_all_pending(self) -> None:
         async with self._state_lock:
             for camera, tracks in self._state.items():
                 for local_id, rec in tracks.items():
                     if not rec.parked_finalized:
-                        self._queue_finalization(camera, local_id, rec)
+                        self._finalizations.enqueue(camera, local_id, rec)
             self._state.clear()
-        deadline = time.monotonic() + 10.0
-        while self._pending_finalizations:
-            await self._drain_finalizations()
-            if not self._pending_finalizations:
-                return
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"shutdown has {len(self._pending_finalizations)} uncommitted tracks")
-            await asyncio.sleep(1.0)
+        await self._finalizations.finish(self._finalize)
 
     async def _record_suppressed(self, local_tid: int, rec: TrackState, closed: _Closed) -> None:
         assert self._pool is not None and rec.db_track_id is not None
@@ -1780,15 +1681,10 @@ class EventManager:
             return
         for zid in list(rec.inside_zones.keys()):
             if zid in rec.enter_emitted:
-                await self._emit_zone_event(
-                    cam_slug,
-                    "zone_exit",
-                    zid,
-                    local_tid,
-                    rec.last_bbox,
+                await self._emit_track_event(
+                    cam_slug, TrackEvent("zone_exit", local_tid, rec.db_track_id,
+                                         rec.class_id, rec.class_name, rec.last_bbox, zid),
                     rec.last_seen_ns,
-                    class_name=rec.class_name,
-                    db_track_id=rec.db_track_id,
                 )
         rec.inside_zones.clear()
         rec.dwell_emitted.clear()

@@ -455,6 +455,8 @@ services:
       target: ${BABA_API_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/api:${BABA_API_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-api
+    # Cancellation retains ownership until the native model load finishes or its 120s watchdog fires.
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -692,6 +694,7 @@ services:
       target: ${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/event-manager:${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-event-manager
+    stop_grace_period: 30s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.

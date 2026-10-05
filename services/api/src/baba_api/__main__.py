@@ -12,13 +12,9 @@ import uvicorn
 from baba_core import (
     drain_quietly,
     make_embedding_backend,
-    make_face_stack_for_model,
     setup_logging,
 )
-from baba_core.face_settings import acknowledge_face_selection, read_face_selection
-from baba_core.inference import run_inference
 from baba_core.nats_conn import connect as nats_connect
-from baba_core.pg_listen import ResilientListener
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from home_core.auth import bootstrap_admin_if_empty, load_or_create_secret
@@ -35,6 +31,7 @@ from baba_api.db import apply_migrations
 from baba_api.deliveries_sweeper import run_sweeper as run_deliveries_sweeper
 from baba_api.events_bridge import EventsNatsBridge
 from baba_api.events_retention_sweeper import run_sweeper as run_events_retention_sweeper
+from baba_api.face_activation import ApiFaceActivation
 from baba_api.face_recompute_queue import recover_recomputes, run_recompute_queue
 from baba_api.go2rtc_sync import Go2RtcSync
 from baba_api.live_view import TrackCache, live_router
@@ -109,76 +106,6 @@ def _init_embedder_backend(app: FastAPI, config: ApiConfig) -> None:
         app.state.embedder_backend = make_embedding_backend(Path(config.embedder_model_path))
     except Exception:
         log.exception("failed to initialise embedder backend; reference-photo upload disabled")
-
-
-async def _load_face_stack(app: FastAPI, pool) -> None:
-    """(Re)build the api's in-process face stack from the DB settings.
-
-    The api runs the face models itself for reference-photo enrollment, so
-    it must use the SAME detector + embedder as the pipeline — enrollment
-    embeddings that live in a different space simply never match. That made
-    this a boot-time read, which meant an operator could switch the model in
-    the UI and leave the api quietly enrolling into the old space until
-    someone restarted it. Now it reloads on `face_recognition_changed`, the
-    same signal the event-manager takes its threshold from.
-    """
-    if not hasattr(app.state, "face_reload_lock"):
-        app.state.face_reload_lock = asyncio.Lock()
-    async with app.state.face_reload_lock:
-        await _activate_api_face_stack(app, pool)
-
-
-async def _activate_api_face_stack(app: FastAPI, pool) -> None:
-    selection = await read_face_selection(pool)
-    pair = (selection.detector_key, selection.model_key)
-    fd = os.environ.get("BABA_FACE_DETECTOR_MODEL", "").strip()
-    if not fd:
-        app.state.face_stack = None
-        app.state.face_stack_error = None
-        await acknowledge_face_selection(pool, "api", selection, "Face detector is not configured")
-        return
-    try:
-        if getattr(app.state, "face_loaded_pair", None) != pair:
-            stack, detector, model = await run_inference(
-                make_face_stack_for_model, yunet_path=Path(fd), models_dir=Path("/models"),
-                model_key=selection.model_key, detector_key=selection.detector_key,
-            )
-            if stack is None or (detector, model) != pair:
-                raise RuntimeError("selected face models could not be loaded")
-            app.state.face_stack = stack
-            app.state.face_model_key = model
-            app.state.face_loaded_pair = pair
-        app.state.face_stack_error = None
-    except Exception as exc:
-        log.exception("api face activation failed")
-        app.state.face_stack = None
-        app.state.face_model_key = None
-        app.state.face_loaded_pair = None
-        app.state.face_stack_error = str(exc)
-        await acknowledge_face_selection(pool, "api", selection, str(exc))
-        return
-    await acknowledge_face_selection(pool, "api", selection)
-
-
-async def _start_face_stack(app: FastAPI, config: ApiConfig, pool) -> ResilientListener:
-    # Reference-photo embedder + face stack. Both loaded once at startup
-    # so each upload only pays inference cost, not initialization. Either
-    # being None just disables the corresponding feature path; the rest
-    # of the api keeps working.
-    _init_embedder_backend(app, config)
-
-    def _on_face_settings_changed(_channel: str, _payload: str) -> None:
-        spawn(_load_face_stack(app, pool), name="api-face-stack-reload", log=log)
-
-    listener = ResilientListener(
-        config.dsn,
-        ["face_recognition_changed"],
-        on_notify=_on_face_settings_changed,
-        on_connect=lambda: _load_face_stack(app, pool),
-        name="api-face-settings",
-    )
-    await listener.start()
-    return listener
 
 
 async def _start_bus_consumers(
@@ -256,8 +183,10 @@ async def lifespan(app: FastAPI):
     await bootstrap_admin_if_empty(pool, config.state_dir, env_prefix="BABA")
     await recover_recomputes(pool)
 
-    face_settings_listener = await _start_face_stack(app, config, pool)
-    app.state.face_settings_listener = face_settings_listener
+    _init_embedder_backend(app, config)
+    face_activation = ApiFaceActivation(app, pool, config.dsn)
+    await face_activation.start()
+    app.state.face_activation = face_activation
     face_recompute_stop = asyncio.Event()
     face_recompute_task = spawn(
         run_recompute_queue(pool, face_recompute_stop, _run_recompute),
@@ -374,6 +303,7 @@ async def lifespan(app: FastAPI):
     finally:
         face_recompute_stop.set()
         face_recompute_task.cancel()
+        await face_activation.stop()
         with suppress(asyncio.CancelledError):
             await face_recompute_task
         camera_override_stop.set()
@@ -416,8 +346,6 @@ async def lifespan(app: FastAPI):
                 await drain_quietly(app.state.nats)
         with suppress(Exception):
             await go2rtc.stop()
-        with suppress(Exception):
-            await face_settings_listener.stop()
         await pool.close()
 
 

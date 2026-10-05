@@ -40,7 +40,7 @@ Commit `92acd3b` was pushed and deployed through `deploy/deploy.sh all`. Both In
 
 ## Follow-up corrections — 5 October 2026
 
-The user requested continued changes after the completed rollout, then authorized commit, push and deploy of these four corrections. The verification below records the follow-up bundle before that second rollout. The running revision is reported by `/version` and `deploy/deploy.sh --status`.
+The user requested continued changes after the completed rollout, then authorized commit, push and deploy of these four corrections. They were deployed in `eafbcdf`, version 1.0.23. The verification below records the follow-up bundle before that second rollout. The running revision is reported by `/version` and `deploy/deploy.sh --status`.
 
 | Finding | Defect and correction | Verification |
 | --- | --- | --- |
@@ -50,6 +50,56 @@ The user requested continued changes after the completed rollout, then authorize
 | F04 | Successful polling did not clear old activation/job network errors. Separate polling errors now clear on recovery, preserve Save validation errors and keep retrying the final settings refresh. | Deferred-response frontend regressions cover error recovery, disposal and superseding saves. |
 
 Follow-up checks: **37 targeted Python tests**, **27 frontend concurrency tests**, Ruff, Svelte static checks (zero errors and warnings), i18n consistency and whitespace checks. Fresh PostgreSQL 18 applied all **108 migrations**. CPU base, API, event manager and production web images were rebuilt under temporary follow-up tags. Actual API/web runtime checks verified login, settings, pending job creation and preservation of the same job after API restart; the event manager connected to PostgreSQL and NATS and maintained its health marker. These checks use fabricated credentials, no real cameras or model weights, and no host ports. This is the local verification snapshot before the authorized follow-up commit, push and deploy.
+
+## Service lifecycles and event contracts — 5 October 2026
+
+After the version 1.0.23 rollout, the user requested the next steps and then authorized publication of this bundle. This implements the pending-finalization, API face-activation and track-event boundaries recommended by the architecture assessment. Four additional findings cover shutdown ownership, motion-event correlation and stable event classification. The verification below records the locally checked implementation before its rollout. The running revision is reported by `/version` and `deploy/deploy.sh --status`.
+
+### P2 F05 Shutdown finalizes tracks before the last subscription messages are processed
+
+**Evidence:** [event-manager shutdown](../services/event-manager/src/baba_event_manager/__main__.py) finalized and cleared active records before draining NATS. The drain can still invoke the track handler, recreating active records after the finalization pass. Those records disappear when the process exits.
+
+**Verification:** A regression runs the actual service lifecycle against migrated PostgreSQL and delivers five observations through its subscription handler during the controlled NATS drain. The version 1.0.23 entrypoint writes zero tracks; the corrected entrypoint writes one track and one event with all five observations.
+
+**Correction:** Stop background loops, the settings listener and statistics publisher, then drain NATS before detaching active tracks for finalization. Finalization writes its events through PostgreSQL and does not require an open NATS connection. The existing ten-second finalization deadline now also bounds a stalled attempt. The event-manager container has a thirty-second stop grace period to accommodate the NATS drain, finalization deadline and resource cleanup.
+
+**Ownership:** [FinalizationQueue](../services/event-manager/src/baba_event_manager/finalization.py) is the sole owner of pending snapshots, stable UUIDs, serialized retries, pending parked-visit closure and commit-dependent source cleanup. Observation, generation retirement, sweeps and shutdown use that queue directly; the previous queue fields and forwarding methods are removed. Its pending-count gauge updates on enqueue and successful completion.
+
+**Checks:** Thirteen targeted Python tests passed, including frozen observation snapshots, failed commits, cancellation, concurrent drains, enqueue during a drain, separate parked arrival/departure records, transaction retry and bounded shutdown. Ruff and Compose validation passed. A rebuilt CPU event-manager image ran against disposable PostgreSQL 18, real NATS and a synthetic camera snapshot endpoint. Restart persisted three tracks and three finalization events exactly once, each with five observations; the rebuilt container returned healthy and then exited cleanly with no warnings or errors. All disposable containers and their network were removed. No production cameras, GPU inference or production configuration were changed.
+
+### P2 F06 API face reload tasks outlive their listener and database pool
+
+**Evidence:** Each face-settings notification spawned a separate reload task in the API entrypoint. The shutdown path stopped the settings listener without awaiting those reload tasks. A task already inside native model loading could continue after the listener stopped and attempt to acknowledge activation after the database pool closed.
+
+**Verification:** The version 1.0.23 entrypoint was exercised against migrated PostgreSQL with a controlled native loader. Stopping its listener left the reload task alive; releasing the native load after pool closure changed the in-process model and raised `InterfaceError: pool is closed` during acknowledgement.
+
+**Correction:** [ApiFaceActivation](../services/api/src/baba_api/face_activation.py) owns the settings listener, reload lock, pending signal and one reload worker. Repeated notifications coalesce, changes received during loading remain pending, and a stale acknowledgement requests the current selection again. Shutdown rejects new requests, stops the listener and cancels and awaits its worker before database closure. The recompute worker is also cancelled before awaiting activation shutdown, so both native operations retain their original deadlines concurrently. The API container's 150-second stop grace period accommodates the existing 120-second native watchdog and cleanup. Missing detector configuration clears all loaded-model state and retains an explicit activation error; restoring it reloads the selected pair.
+
+**Checks:** Eight PostgreSQL regressions passed: threshold-only revisions reuse models and wait for the embedder acknowledgement; a burst of 100 reload requests coalesces through a superseded load; shutdown retains ownership of a real executor thread and prevents later pool access; empty, mismatched and failing model loads remain visible and recover on retry; missing detector configuration clears stale state and recovers; and a transient settings-read failure retries without another notification. The new test file is included in the API database test gate. Ruff, shell syntax, explicit synthetic Compose validation and whitespace checks passed.
+
+A rebuilt CPU API image ran against disposable PostgreSQL 18, NATS and go2rtc with synthetic credentials and no host ports. Login, authenticated settings reads, a real notification-driven refresh, restart with the selected revision preserved and application shutdown completion were verified without service warnings or errors. Native ownership tests use controlled model factories; the runtime deliberately omits face weights and verifies the resulting explicit configuration diagnostic. These checks do not assess learned-model quality or target GPU behaviour. All disposable containers and networks were removed.
+
+### P2 F07 Motion events lose their visit UUID and a closed arrival hides departure
+
+**Evidence:** The former motion-event producer omitted the optional database UUID when creating `object_parked` and `object_unparked`, so the writer inserted `events.track_id = NULL`. Separately, reopening a closed parked vehicle's visit initialized its motion state to `active` before detecting the transition. The new departure visit therefore lost the parked-to-active edge and emitted no `object_unparked`.
+
+**Verification:** The version 1.0.23 entrypoint failed a real PostgreSQL observation regression: a vehicle moved away after its parked arrival closed, but the event list contained only `object_parked`. The corrected regression covers both an already committed arrival and an arrival still awaiting persistence. Parking links to the arrival UUID; departure links to a fresh UUID; later active observations produce no duplicate departure, and completing the pending arrival does not alter the departure record.
+
+**Correction:** [TrackEvent](../core/src/baba_core/events.py) is the shared immutable transition contract. Every zone or motion event requires a reserved visit UUID and captures its observed class and coordinates. Zone events require their zone UUID. [The event writer](../services/event-manager/src/baba_event_manager/events.py) owns payload serialization and deterministic event IDs based on camera, visit, kind, zone and observation timestamp. The entrypoint resolves camera/zone metadata and increments its event counter only for a new insert. Reopening a departure carries the previous motion state into transition detection while retaining the new visit UUID. The former optional-UUID pending-event structure and writer are removed.
+
+**Checks:** Seven new regression cases passed, including both parked closure states, idempotent persistence, local tracker-ID reuse across separate visits, immutable snapshots and rejected incomplete contracts. All eight cases in the changed observation test file also passed. No schema change or historical event rewrite is required.
+
+### P2 F08 Alarms and the event feed change class when a track finalizes
+
+**Evidence:** The alarm dispatcher preferred the finalized track's majority class over the event payload. An event observed as `car` could therefore match the car rule immediately but the truck rule after finalization, including on a later dispatch attempt. The event feed read class only from the track join: it returned no class while the track was active and later substituted the majority class.
+
+**Verification:** Real PostgreSQL regressions first create a car event without a track row, then finalize the same UUID as a truck. Against the version 1.0.23 API, the car filter stops matching after finalization and the event feed initially reports a null class. Against the corrected API, the car filter and title remain unchanged before and after finalization and after track deletion. The feed preserves the same UUID and observed class while adding the finalized duration.
+
+**Correction:** [Alarm dispatch](../services/api/src/baba_api/rules_dispatcher.py) and [the event feed](../services/api/src/baba_api/routes_events.py) read class exclusively from the event snapshot. The feed still joins finalized tracks and recordings for media, duration and playback metadata. The Sightings view continues to use the finalized track's majority class. The existing API response shape and local tracker ID in the payload are preserved; the database event's track reference is the visit UUID.
+
+**Checks:** Two new PostgreSQL API regressions passed and are included in the API database gate; the seven event-contract cases are included in the event-manager database gate. Together with the changed observation file, **17 targeted Python tests** passed. Ruff, test-runner syntax and whitespace checks passed. Fresh CPU base, API and event-manager images were built with the shared contract included.
+
+Both rebuilt services ran without source overlays against disposable PostgreSQL 18, real NATS, go2rtc and a synthetic JPEG endpoint, with fabricated credentials and no host ports. Seven observations of three person tracks produced a correlated parked/unparked pair. Authenticated HTTP reads returned its UUID and observed class before track persistence. Restarting the event manager persisted all three tracks and their finalization events exactly once; the motion events kept their IDs and class and gained duration and thumbnail metadata. Both services restarted healthy and completed shutdown without warnings or errors. All disposable containers and their network were removed. Separate vehicle arrival/departure UUIDs and majority-class changes are covered by the PostgreSQL regressions; this runtime does not exercise cameras, GPU inference or model quality.
 
 ## Review baseline
 
@@ -372,7 +422,7 @@ The per-camera I/O and shared-inference topology is appropriate for the intended
 
 The recurring weakness is ownership across asynchronous boundaries: a track is forgotten before a write, a scene advances before commit, a settings value is declared selected before all producers adopt it, and a page assumes cleanup has covered resources created later. Correcting these state transitions is more valuable than broad cosmetic refactoring.
 
-The largest service entrypoints contain orchestration, mutable state and persistence together. Further extraction should follow the corrected boundaries: pending finalizations, model activation, event contracts and inference operation ownership. Preserve one authoritative implementation of each contract and avoid compatibility layers or duplicate stores.
+The largest service entrypoints contain orchestration, mutable state and persistence together. Pending finalizations and API face activation now have dedicated owners in the lifecycle bundle described above. Track transitions share an immutable core contract and one persistence implementation. Further extraction should follow explicit lifecycle and persistence boundaries, preserving one authoritative implementation without compatibility layers or duplicate stores.
 
 The shared-memory writer already invalidates a slot before overwriting pixels and publishes completed metadata afterward. The review did not establish a new torn-frame defect there. Similarly, model-tag filtering is a valid protection against cross-model face comparisons; finding 06 concerns activation coordination around that protection.
 

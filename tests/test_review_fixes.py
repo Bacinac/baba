@@ -49,11 +49,11 @@ def test_expired_and_parked_tracks_survive_a_failed_commit(tmp_path, monkeypatch
         em._finalize = commit
         try:
             await em._sweep_once()
-            assert len(em._pending_finalizations) == 2
+            assert len(em._finalizations) == 2
             assert 1 not in em._state["yard"]
             assert not parked.parked_finalized
             await em._sweep_once()
-            assert not em._pending_finalizations
+            assert not em._finalizations
             assert parked.parked_finalized
             assert attempts[:2] == attempts[2:]
         finally:
