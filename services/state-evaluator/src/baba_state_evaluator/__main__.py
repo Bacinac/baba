@@ -633,6 +633,13 @@ class StateEvaluator:
                 return  # need >= 2 labelled states to classify
             frame = self._reader_for(region.camera_slug).get_latest()
             if frame is None:
+                # A ring with nothing in it is a camera that has produced no
+                # frame since the SHM volume was made — after a deploy, a
+                # camera already down stays here for good. The same absence
+                # as a frozen ring, and it must not hold the state silently.
+                rt.pending_label = None
+                rt.pending_count = 0
+                await self._status_mark_stale(region_id)
                 return
             # Staleness guard. SHM readers survive ingestor/camera death (the
             # frame ring is a shared /dev/shm volume), so get_latest() keeps

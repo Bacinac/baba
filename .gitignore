@@ -89,6 +89,7 @@ demo/media/
 # Internal working docs (reviews, roadmap, research spikes, Claude instructions)
 # — kept on disk for local use, not part of the public repo.
 /CLAUDE.md
+/AGENTS.md
 /CODE_REVIEW_*.md
 /APP_REVIEW_*.md
 /ROADMAP.md

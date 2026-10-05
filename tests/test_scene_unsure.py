@@ -12,7 +12,8 @@ import json
 from types import SimpleNamespace
 
 import asyncpg
-from baba_state_evaluator.__main__ import RegionConfig, StateEvaluator
+import numpy as np
+from baba_state_evaluator.__main__ import RegionConfig, RegionRuntime, StateEvaluator
 
 _POLYGON = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0]]
 
@@ -147,6 +148,22 @@ def test_a_frozen_camera_is_no_answer_either(pg):
         await ev._status_mark_stale(region.id)
         await _minutes_pass(pool, region.id)
         await ev._status_mark_stale(region.id)
+        assert (await _status(pool, region.id))["published_state"] == "unknown"
+
+    _run(pg, body)
+
+
+def test_a_camera_that_never_delivered_a_frame_is_no_answer_either(pg):
+    async def body(pool):
+        ev, region = await _gate_held_open(pool)
+        ev._lock = asyncio.Lock()
+        ev._regions = {region.id: region}
+        ev._runtime = {region.id: RegionRuntime(current_state="open")}
+        ev._protos = {region.id: [("open", np.zeros(384)), ("closed", np.ones(384))]}
+        ev._reader_for = lambda slug: SimpleNamespace(get_latest=lambda: None)
+        await ev._tick_region(region.id)
+        await _minutes_pass(pool, region.id)
+        await ev._tick_region(region.id)
         assert (await _status(pool, region.id))["published_state"] == "unknown"
 
     _run(pg, body)
