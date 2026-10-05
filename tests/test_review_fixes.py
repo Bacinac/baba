@@ -18,7 +18,7 @@ from baba_api import tracks_retention_sweeper as retention
 from baba_api.models import SegmentAtPointIn
 from baba_api.routes_rules import RuleFilter, RulePatch
 from baba_core.face_settings import acknowledge_face_selection, read_face_selection
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from baba_core.pg_listen import ResilientListener
 from baba_core.stats import StatsCollector
 from baba_event_manager.__main__ import EventManager
@@ -200,8 +200,8 @@ def test_ffprobe_is_killed_and_reaped_on_timeout_and_cancellation(monkeypatch, f
 
 @pytest.mark.parametrize("cancelled", [False, True])
 def test_stuck_native_inference_exits_the_process(cancelled):
-    code = "import asyncio,time; from baba_core.inference import run_inference; from home_core.tasks import spawn\n"
-    code += "async def main():\n t=spawn(run_inference(time.sleep,60,timeout_s=.05))\n"
+    code = "import asyncio,time; from baba_core.native import run_native; from home_core.tasks import spawn\n"
+    code += "async def main():\n t=spawn(run_native(time.sleep,60,timeout_s=.05))\n"
     if cancelled:
         code += " await asyncio.sleep(.01)\n t.cancel()\n t.cancel()\n"
     code += " await t\nasyncio.run(main())"
@@ -218,7 +218,7 @@ def test_cancelled_inference_keeps_ownership_until_the_thread_finishes():
         def native():
             entered.set()
             assert release.wait(2)
-        task = spawn(run_inference(native, timeout_s=3))
+        task = spawn(run_native(native, timeout_s=3))
         try:
             assert await asyncio.to_thread(entered.wait, 2)
             task.cancel()
@@ -238,7 +238,7 @@ def test_native_timeout_error_is_not_a_watchdog_expiry():
         raise TimeoutError("native operation failed")
     async def main():
         with pytest.raises(TimeoutError, match="native operation failed"):
-            await run_inference(native)
+            await run_native(native)
     asyncio.run(main())
 
 
@@ -320,6 +320,205 @@ def test_retention_skips_a_track_whose_deadline_is_being_extended(pg, tmp_path):
             assert await pool.fetchval("SELECT EXISTS(SELECT 1 FROM tracks_all WHERE id=$1)", tid)
         finally:
             await pool.close()
+    asyncio.run(main())
+
+
+@pytest.mark.parametrize("kind", ["track", "plate"])
+def test_cancelled_retention_keeps_row_locked_until_media_and_metadata_are_deleted(pg, tmp_path, monkeypatch, kind):
+    entered, release = threading.Event(), threading.Event()
+    unlink = retention._unlink_row_media
+
+    def blocked_unlink(*args):
+        entered.set()
+        assert release.wait(3)
+        return unlink(*args)
+
+    monkeypatch.setattr(retention, "_unlink_row_media", blocked_unlink)
+
+    async def main():
+        pool = await asyncpg.create_pool(pg, min_size=1, max_size=3)
+        task = None
+        try:
+            cam = await pool.fetchval("INSERT INTO cameras(name,slug,stream_url) VALUES('yard','yard','rtsp://x') RETURNING id")
+            (tmp_path / "crop.jpg").write_bytes(b"crop")
+            if kind == "track":
+                table = "tracks_all"
+                row = await pool.fetchval("INSERT INTO tracks_all(camera_id,local_track_id,class_id,class_name,started_at,ended_at,"
+                    "n_observations,retain_until,crop_path) VALUES($1,1,0,'person',now(),now(),1,now()-interval '1 hour','crop.jpg') RETURNING id", cam)
+                prune = retention._prune_one_batch
+            else:
+                table = "plate_reads"
+                row = await pool.fetchval("INSERT INTO plate_reads(camera_id,read_at,plate_text,readings,crop_path) "
+                    "VALUES($1,now()-interval '31 days','TEST',2,'crop.jpg') RETURNING id", cam)
+                prune = retention._prune_plate_reads
+            task = asyncio.create_task(prune(pool, tmp_path, 10))
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            await asyncio.sleep(.01)
+            assert not task.done()
+            async with pool.acquire() as conn:
+                with pytest.raises(asyncpg.LockNotAvailableError):
+                    await conn.fetchrow(f"SELECT id FROM {table} WHERE id=$1 FOR UPDATE NOWAIT", row)  # noqa: S608
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            assert not (tmp_path / "crop.jpg").exists()
+            assert not await pool.fetchval(f"SELECT EXISTS(SELECT 1 FROM {table} WHERE id=$1)", row)  # noqa: S608
+        finally:
+            release.set()
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+            await pool.close()
+
+    asyncio.run(main())
+
+
+def test_event_bridge_finishes_cancelled_callbacks_before_pool_closes():
+    from baba_api.events_bridge import EventsNatsBridge
+
+    async def main():
+        entered, cleaned = asyncio.Event(), asyncio.Event()
+
+        async def fetch(*args):
+            entered.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                cleaned.set()
+
+        pool = SimpleNamespace(fetchrow=fetch)
+        bridge = EventsNatsBridge("test", pool, SimpleNamespace(publish=AsyncMock()))
+        bridge._listener = SimpleNamespace(stop=AsyncMock())
+        bridge._on_notify("events_new", json.dumps({"id": str(uuid4())}))
+        await entered.wait()
+        await bridge.stop()
+        assert cleaned.is_set()
+        bridge._listener.stop.assert_awaited_once()
+        bridge._on_notify("events_new", json.dumps({"id": str(uuid4())}))
+        assert not bridge._tasks._tasks
+
+    asyncio.run(main())
+
+
+def test_scene_capture_does_not_enrol_a_prototype_when_jpeg_write_fails(tmp_path, monkeypatch):
+    async def main():
+        rid = uuid4()
+        svc = object.__new__(scene.StateEvaluator)
+        svc._lock = asyncio.Lock()
+        svc._regions = {rid: SimpleNamespace(camera_slug="yard", polygon=[[0, 0], [1, 0], [1, 1]])}
+        svc._protos = {}
+        svc._stats = StatsCollector("test")
+        svc._media_root = tmp_path
+        svc._reader_for = lambda _: SimpleNamespace(get_latest=lambda: object())
+        svc._embed_region = AsyncMock(return_value=scene._Frame(np.ones((4, 4, 3), np.uint8), np.ones(3), 100))
+        svc._insert_prototype = AsyncMock()
+        msg = SimpleNamespace(data=json.dumps({"region_id": str(rid), "state_label": "open"}).encode(),
+                              reply="test", respond=AsyncMock())
+        monkeypatch.setattr(scene.cv2, "imwrite", lambda *args: False)
+        await svc._on_capture_request(msg)
+        reply = json.loads(msg.respond.call_args.args[0])
+        assert reply["error"].startswith("internal: failed to write scene crop")
+        assert reply["prototype_id"] is None
+        svc._insert_prototype.assert_not_awaited()
+        assert not svc._protos
+
+    asyncio.run(main())
+
+
+def test_scene_native_cancellation_keeps_the_region_lock(monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+
+    async def main():
+        svc = object.__new__(scene.StateEvaluator)
+        svc._lock = asyncio.Lock()
+        svc._stats = StatsCollector("test")
+
+        def embed(crops):
+            entered.set()
+            assert release.wait(3)
+            return np.ones((1, 3))
+
+        svc._backend = SimpleNamespace(embed=embed)
+        monkeypatch.setattr(scene, "_region_rgb_crop", lambda *args: (np.ones((4, 4, 3), np.uint8), 100))
+
+        async def capture():
+            async with svc._lock:
+                await svc._embed_region(object(), [])
+
+        task = asyncio.create_task(capture())
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            await asyncio.sleep(.01)
+            assert svc._lock.locked()
+            assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not svc._lock.locked()
+
+    asyncio.run(main())
+
+
+def test_stopping_listener_ignores_queued_notifications():
+    seen = []
+    listener = ResilientListener("test", ["changed"], lambda *args: seen.append(args))
+    listener._stopping = True
+    listener._dispatch(None, 1, "changed", "late")
+    assert not seen
+
+
+def test_scene_capture_native_deadline_applies_without_configured_regions():
+    code = """
+import asyncio, time
+from functools import partial
+from types import SimpleNamespace
+import numpy as np
+from baba_core.native import run_native
+from baba_core.stats import StatsCollector
+from baba_state_evaluator import __main__ as scene
+scene.run_native = partial(run_native, timeout_s=.05)
+scene._region_rgb_crop = lambda *a: (np.ones((4,4,3), np.uint8), 100)
+svc = object.__new__(scene.StateEvaluator)
+svc._regions = {}
+svc._stats = StatsCollector('test')
+svc._backend = SimpleNamespace(embed=lambda crops: time.sleep(60))
+scene.setup_logging("state-evaluator")
+asyncio.run(svc._embed_region(object(), []))
+"""
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=5)
+    assert result.returncode == 1
+    assert b"exiting for restart" in result.stderr
+
+
+def test_api_sse_cleanup_is_awaited_before_background_owner_stops():
+    import logging
+
+    from baba_api.sse import _detach
+    from baba_core.task_owner import TaskOwner
+
+    async def main():
+        owner = TaskOwner("api-background", logging.getLogger(__name__))
+        request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(background_tasks=owner)))
+        entered, release = asyncio.Event(), asyncio.Event()
+        cleaned = []
+
+        async def cleanup():
+            entered.set()
+            await release.wait()
+            cleaned.append("connection")
+
+        _detach(request, cleanup())
+        await entered.wait()
+        stop = asyncio.create_task(owner.stop(cancel=False))
+        await asyncio.sleep(0)
+        assert not stop.done()
+        release.set()
+        await stop
+        assert cleaned == ["connection"]
+
     asyncio.run(main())
 
 

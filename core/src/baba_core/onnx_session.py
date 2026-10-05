@@ -55,6 +55,7 @@ def check_bound_provider(session: Any, provider: str, label: str) -> None:
         raise RuntimeError(
             f"{label}: {provider} failed to initialise and onnxruntime bound {bound} instead"
         )
+    session.disable_fallback()
 
 
 # ---------------------------------------------------------------------------

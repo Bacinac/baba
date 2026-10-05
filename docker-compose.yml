@@ -294,6 +294,7 @@ services:
       target: ${BABA_DETECTOR_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/detector:${BABA_DETECTOR_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-detector
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -375,6 +376,7 @@ services:
       target: ${BABA_TRACKER_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/tracker:${BABA_TRACKER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-tracker
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -649,6 +651,7 @@ services:
       target: ${BABA_RECORDER_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/recorder:${BABA_RECORDER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-recorder
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -694,7 +697,7 @@ services:
       target: ${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/event-manager:${BABA_EVENT_MANAGER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-event-manager
-    stop_grace_period: 30s
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -854,6 +857,7 @@ services:
       target: ${BABA_DOORBELL_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/doorbell:${BABA_DOORBELL_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-doorbell
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -890,6 +894,7 @@ services:
       target: ${BABA_EMBEDDER_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/embedder:${BABA_EMBEDDER_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-embedder
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.
@@ -956,6 +961,7 @@ services:
       target: ${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}
     image: ${BABA_IMAGE_BASE:-ghcr.io/bacinac/baba}/state-evaluator:${BABA_STATE_EVALUATOR_VARIANT:-${BABA_VARIANT:-cpu}}${BABA_IMAGE_TAG:+-${BABA_IMAGE_TAG}}
     container_name: baba-state-evaluator
+    stop_grace_period: 150s
     # Run unprivileged (see docker/base-*.Dockerfile UV_PYTHON_INSTALL_DIR,
     # which puts the interpreter somewhere a non-root uid can exec). Matches
     # the host user so bind-mounted media/state stay mutually writable.

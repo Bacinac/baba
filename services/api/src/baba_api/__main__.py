@@ -15,6 +15,7 @@ from baba_core import (
     setup_logging,
 )
 from baba_core.nats_conn import connect as nats_connect
+from baba_core.task_owner import TaskOwner
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from home_core.auth import bootstrap_admin_if_empty, load_or_create_secret
@@ -341,6 +342,7 @@ async def lifespan(app: FastAPI):
                 await roster_bridge.stop()
         with suppress(Exception):
             await track_cache.stop()
+        await app.state.background_tasks.stop(cancel=False)
         if app.state.nats is not None:
             with suppress(Exception):
                 await drain_quietly(app.state.nats)
@@ -352,6 +354,7 @@ async def lifespan(app: FastAPI):
 def build_app(config: ApiConfig) -> FastAPI:
     app = FastAPI(title="BABA API", version=version_string(), lifespan=lifespan)
     app.state.config = config
+    app.state.background_tasks = TaskOwner("api-background", log)
 
     # CORS only matters when the UI is on a different origin. In dev the
     # SvelteKit proxy is same-origin (everything goes through :5173), so the

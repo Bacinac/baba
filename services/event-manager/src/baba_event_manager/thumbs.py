@@ -24,6 +24,7 @@ import logging
 from pathlib import Path
 
 import httpx
+from baba_core.native import run_native
 from baba_core.paths import THUMBNAILS, MediaLayout
 from PIL import Image
 
@@ -137,7 +138,7 @@ class ThumbnailCapture:
             log.warning("snapshot fetch failed for %s after 3 attempts: %s", camera_slug, last_err)
             return None
         try:
-            return await asyncio.to_thread(self._encode_and_save, raw, target_name)
+            return await run_native(self._encode_and_save, raw, target_name)
         except Exception:
             log.exception("encode/save failed for %s", camera_slug)
             return None

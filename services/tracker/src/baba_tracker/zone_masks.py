@@ -40,6 +40,7 @@ import logging
 
 import asyncpg
 from baba_core.pg_listen import ResilientListener
+from baba_core.task_owner import TaskOwner
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +81,7 @@ class ZoneMasks:
         self._dsn = dsn
         self._pool: asyncpg.Pool | None = None
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("tracker-zone-masks", log)
         # slug → list of polygons, each a list of (x, y) in [0,1].
         self._by_slug: dict[str, list[list[tuple[float, float]]]] = {}
         # slug → parking polygons; a spot whose foot is inside one is exempt
@@ -101,6 +103,7 @@ class ZoneMasks:
         if self._listener is not None:
             await self._listener.stop()
             self._listener = None
+        await self._tasks.stop()
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
@@ -127,9 +130,7 @@ class ZoneMasks:
         return any(_point_in_polygon(cx, cy, p) for p in polys)
 
     def _schedule_refresh(self) -> None:
-        from home_core.tasks import spawn
-
-        spawn(self._refresh_safe())
+        self._tasks.spawn(self._refresh_safe())
 
     async def _refresh_safe(self) -> None:
         try:

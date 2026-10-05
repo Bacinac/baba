@@ -22,6 +22,7 @@ import logging
 
 import asyncpg
 from baba_core.pg_listen import ResilientListener
+from baba_core.task_owner import TaskOwner
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class RosterNatsBridge:
         self._pool = pool
         self._nc = nc
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("api-roster-bridge", log)
 
     async def start(self) -> None:
         # Serve on-demand: a DIDA adapter that (re)starts after us gets the roster
@@ -67,9 +69,7 @@ class RosterNatsBridge:
         log.info("roster→NATS bridge listening on cameras_changed/zones_changed/detection_rules_changed (+ %s)", _REQUEST)
 
     def _on_notify(self, _channel: str, _payload: str) -> None:
-        from home_core.tasks import spawn
-
-        spawn(self._publish())  # can't await in the asyncpg notify callback
+        self._tasks.spawn(self._publish())
 
     async def _on_request(self, msg) -> None:
         if not msg.reply:
@@ -188,3 +188,4 @@ class RosterNatsBridge:
     async def stop(self) -> None:
         if self._listener is not None:
             await self._listener.stop()
+        await self._tasks.stop()

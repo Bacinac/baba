@@ -34,7 +34,7 @@ from typing import Any
 import cv2
 import numpy as np
 from baba_core.face import FRONTALITY_MAX, align_face, frontality_residual, set_canonical_face
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from baba_core.paths import FACE_CROPS, MediaLayout
 from baba_core.recordings import covers_until_sql
 
@@ -232,7 +232,7 @@ class NativeFaceReader:
         if not samples:
             why.append(_NO_SEGMENT)
         for s in samples:
-            got = await run_inference(
+            got = await run_native(
                 self._read_face,
                 self._media_root / s["path"], s["started_at"], s["captured_at"],
                 s["bbox"], track["downscale_max_edge"],

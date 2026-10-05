@@ -201,7 +201,7 @@ export interface BabaEvent {
     id: string;
     class_id: number;
     class_name: string;
-    duration_s: number;
+    duration_s: number | null;
     /** Relative path like 'thumbnails/<uuid>.jpg' served by /api/<path>. Null if capture failed. */
     thumbnail_path: string | null;
   } | null;

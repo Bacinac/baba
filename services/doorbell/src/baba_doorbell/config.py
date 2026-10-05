@@ -11,7 +11,7 @@ class DoorbellConfig:
     dsn: str
     # Camera slugs that are doorbells (their `cameras.stream_url` carries the
     # host + credentials we reach over the LAN). Comma-separated env; defaults
-    # to the single "doorbell" camera.
+    # to no cameras when this installation has no doorbell.
     slugs: tuple[str, ...]
     # Backoff before reconnecting a dropped Baichuan session.
     reconnect_seconds: float

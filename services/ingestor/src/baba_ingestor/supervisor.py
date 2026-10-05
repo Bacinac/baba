@@ -11,8 +11,8 @@ from baba_core import DECODERS, RING_PIXEL_FORMAT, StatsCollector, VideoDecoder
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.nats_conn import drain_quietly
 from baba_core.pg_listen import ResilientListener
+from baba_core.task_owner import TaskOwner
 from baba_core.wire import SUBJECT_TELEMETRY_TEMPLATE, ActivityMessage
-from home_core.tasks import spawn
 
 from baba_ingestor.config import CameraSpec, SupervisorConfig
 from baba_ingestor.worker import CameraWorker
@@ -55,6 +55,7 @@ class IngestorSupervisor:
         self._workers: dict[str, CameraWorker] = {}  # keyed by camera slug
         self._pool: asyncpg.Pool | None = None
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("ingestor-supervisor", log)
         self._reconcile_event = asyncio.Event()
         # go2rtc names whose source was swapped under a reader already on them.
         self._source_changed: set[str] = set()
@@ -98,7 +99,7 @@ class IngestorSupervisor:
             name="ingestor-listen",
         )
         await self._listener.start()
-        spawn(self._reconcile_loop(), name="ingestor-reconcile-loop")
+        self._tasks.spawn(self._reconcile_loop(), name="ingestor-reconcile-loop")
 
         # Adaptive-fps feedback loop: the tracker publishes a per-tick scene
         # activity verdict per camera; workers with idle_fps configured use it
@@ -107,7 +108,7 @@ class IngestorSupervisor:
         # CameraWorker), so a dropped subscription degrades cost, not coverage.
         self._activity_nc = await nats_connect(self._config.nats_url, name="ingestor-activity")
         await self._activity_nc.subscribe("baba.activity.*", cb=self._on_activity)
-        spawn(self._telemetry_loop(), name="ingestor-telemetry")
+        self._tasks.spawn(self._telemetry_loop(), name="ingestor-telemetry")
 
         log.info(
             "supervisor started: %d worker(s) running",
@@ -153,6 +154,7 @@ class IngestorSupervisor:
             await drain_quietly(self._activity_nc)
         if self._listener is not None:
             await self._listener.stop()
+        await self._tasks.stop()
         await asyncio.gather(*(w.stop() for w in self._workers.values()))
         self._workers.clear()
         if self._pool is not None:

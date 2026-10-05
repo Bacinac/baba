@@ -22,6 +22,11 @@ restart: cameras, tracks, events, identities, recordings and settings.
   when configured; they do not independently assign a person's name.
 - **Independent stages.** Each service subscribes to what it needs, so a slow
   stage falls behind on its own without stalling the others.
+- **Resource ownership spans cancellation.** Native work retains its lock until
+  completion and has a finite restart deadline (`baba_core.native`). A service
+  owns its background tasks (`baba_core.task_owner`) and closes them before
+  pools or frame readers. File/metadata deletion completes its batch before
+  reporting cancellation; track finalization retains retry ownership until commit.
 - **Hardware behind plug-in backends.** Inference and decoding are backends
   found by Python entry point. ONNX is the one model format; each backend
   compiles it for its hardware on first load and caches the result.
@@ -34,7 +39,7 @@ restart: cameras, tracks, events, identities, recordings and settings.
 | Component | Role |
 |---|---|
 | `ingestor` | One decoder per enabled camera; writes frames to the shared-memory ring and adapts the frame rate to scene activity |
-| `detector` | Batched transformer detection (RT-DETRv2, D-FINE) on the GPU; very wide frames are split into overlapping tiles |
+| `detector` | Batched transformer detection (RT-DETRv2, D-FINE, RF-DETR) on the GPU; very wide frames are split into overlapping tiles |
 | `tracker` | Per-camera tracking (Norfair with OSNet appearance); motion state (moving, stationary, parked) and the activity verdict the ingestor follows |
 | `embedder` | Body embeddings (OSNet) and faces (YuNet, AuraFace, or selected BYOM models) for tracked objects, sampled from the ring and native recordings |
 | `event-manager` | Turns track lifecycles into durable tracks and events, zone entries, exits and dwell; thumbnails |

@@ -10,10 +10,11 @@ from pathlib import Path
 from typing import ClassVar
 
 import asyncpg
+from baba_core.native import run_native
 from baba_core.observed_record import OBSERVED_MEDIA_DIRS, OBSERVED_TABLES
 from baba_core.pg_listen import ResilientListener
 from baba_core.retention import ANONYMOUS
-from home_core.tasks import spawn
+from baba_core.task_owner import TaskOwner, finish_on_cancel
 
 from baba_recorder.config import CameraSpec, RecorderConfig
 from baba_recorder.worker import CameraRecorder
@@ -68,6 +69,7 @@ class RecorderSupervisor:
         self._workers: dict[str, CameraRecorder] = {}  # by slug
         self._pool: asyncpg.Pool | None = None
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("recorder-supervisor", log)
         self._reconcile_event = asyncio.Event()
         # go2rtc names whose source was swapped under a reader already on them.
         self._source_changed: set[str] = set()
@@ -98,7 +100,7 @@ class RecorderSupervisor:
         # mid-sweep — an infinite restart loop that kept recording DOWN. The
         # sweep is cleanup, never a prerequisite for recording, so it runs in
         # the background while workers start immediately.
-        spawn(self._orphan_sweep_loop(), name="recorder-orphan-sweep")
+        self._tasks.spawn(self._orphan_sweep_loop(), name="recorder-orphan-sweep")
         # Resilient LISTEN: reconnects after a DB blip and re-reconciles on
         # every (re)connect, so a camera added while the listener was down
         # still gets a recorder worker (the initial reconcile runs here too).
@@ -110,9 +112,9 @@ class RecorderSupervisor:
             name="recorder-listen",
         )
         await self._listener.start()
-        spawn(self._reconcile_loop(), name="recorder-reconcile")
-        spawn(self._retention_loop(), name="recorder-retention")
-        spawn(self._purge_loop(), name="recorder-purge")
+        self._tasks.spawn(self._reconcile_loop(), name="recorder-reconcile")
+        self._tasks.spawn(self._retention_loop(), name="recorder-retention")
+        self._tasks.spawn(self._purge_loop(), name="recorder-purge")
         log.info("recorder supervisor up: %d worker(s)", len(self._workers))
 
     def _on_notify(self, channel: str, payload: str) -> None:
@@ -150,6 +152,7 @@ class RecorderSupervisor:
         log.info("recorder supervisor stopping (%d worker(s))", len(self._workers))
         if self._listener is not None:
             await self._listener.stop()
+        await self._tasks.stop()
         await asyncio.gather(*(w.stop() for w in self._workers.values()))
         self._workers.clear()
         if self._pool is not None:
@@ -360,6 +363,9 @@ class RecorderSupervisor:
                 log.exception("recordings purge failed")
 
     async def _run_purge(self) -> None:
+        await finish_on_cancel(self._purge(), name="recordings-purge", log=log)
+
+    async def _purge(self) -> None:
         """Drain a pending purge, as far as its scope reaches.
 
         The video always goes: all segment + clip files, then the `recordings`
@@ -408,7 +414,7 @@ class RecorderSupervisor:
                             log.exception("purge: failed to delete %s", path)
                 return removed
 
-            n_files = await asyncio.to_thread(_wipe)
+            n_files = await run_native(_wipe)
 
             async with self._pool.acquire() as conn, conn.transaction():
                 tag = await conn.execute("DELETE FROM recordings")
@@ -488,7 +494,7 @@ class RecorderSupervisor:
                         log.exception("purge: failed to delete %s", path)
             return gone
 
-        n_files = await asyncio.to_thread(_unlink)
+        n_files = await run_native(_unlink)
         log.warning(
             "purge: the observed record is gone — %d table(s), %d file(s)",
             len(OBSERVED_TABLES), n_files,
@@ -675,9 +681,12 @@ class RecorderSupervisor:
         if not rows:
             return 0
         id_paths = [(r["id"], r["path"]) for r in rows]
-        deleted = await asyncio.to_thread(
-            _unlink_recording_files, self._config.media_path, id_paths
+        return await finish_on_cancel(
+            self._delete_recording_batch(conn, id_paths), name="recording-retention-batch", log=log,
         )
+
+    async def _delete_recording_batch(self, conn, id_paths) -> int:
+        deleted = await run_native(_unlink_recording_files, self._config.media_path, id_paths)
         if deleted:
             await conn.execute(
                 "DELETE FROM recordings WHERE id = ANY($1::uuid[])", deleted
@@ -740,14 +749,9 @@ class RecorderSupervisor:
                     )
                 break
             id_paths = [(r["id"], r["path"]) for r in batch]
-            deleted = await asyncio.to_thread(
-                _unlink_recording_files, self._config.media_path, id_paths
+            removed += await finish_on_cancel(
+                self._delete_recording_batch(conn, id_paths), name="recording-disk-prune-batch", log=log,
             )
-            if deleted:
-                await conn.execute(
-                    "DELETE FROM recordings WHERE id = ANY($1::uuid[])", deleted
-                )
-            removed += len(deleted)
             # Circuit breaker: deleting a batch of closed segments frees real
             # bytes. If `free` didn't rise afterwards, an external tenant is
             # consuming the shared volume at least as fast as we prune — keeping

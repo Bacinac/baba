@@ -63,6 +63,7 @@ from baba_core import (
 )
 from baba_core.ffmpeg_decoder import ffprobe_stream, scaled_dims
 from baba_core.frame_ring import PIXEL_FORMAT_NV12, RingFrame
+from baba_core.native import run_native
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.occupancy import (
     announce_episodes,
@@ -77,6 +78,7 @@ from baba_core.pg_listen import ResilientListener
 from baba_core.plate_stack import make_plate_stack
 from baba_core.recordings import covers_until_sql
 from baba_core.runtime import run_service
+from baba_core.task_owner import TaskOwner
 from baba_core.wire import SUBJECT_STATE_CAPTURE, SUBJECT_STATE_EVAL
 from home_core.health import HealthMarker
 from home_core.tasks import spawn
@@ -414,6 +416,7 @@ class StateEvaluator:
         self._protos: dict[UUID, list[tuple[str, np.ndarray]]] = {}
         self._runtime: dict[UUID, RegionRuntime] = {}
         self._stats = StatsCollector(service="state-evaluator")
+        self._config_tasks = TaskOwner("state-evaluator-config", log)
         # Serialises config reconcile against the eval loop + control requests,
         # and serialises ONNX inference (one session, low volume).
         self._lock = asyncio.Lock()
@@ -465,7 +468,7 @@ class StateEvaluator:
 
     def _on_changed(self, *_a) -> None:
         if self._pool is not None:
-            spawn(self._reconcile())
+            self._config_tasks.spawn(self._reconcile())
 
     async def _reconcile(self) -> None:
         """Reload region config + prototypes + persisted status from the DB.
@@ -837,7 +840,7 @@ class StateEvaluator:
             return None
         crop, contrast = got
         with self._stats.timer("embed_ms"):
-            vecs = await asyncio.to_thread(self._backend.embed, [crop])
+            vecs = await run_native(self._backend.embed, [crop])
         if vecs.shape[0] != 1:
             return None
         return _Frame(crop=crop, vector=vecs[0], contrast=contrast)
@@ -1023,7 +1026,7 @@ class StateEvaluator:
                         raise CaptureError("blinded")
                     proto_id = uuid4()
                     crop_rel = MediaLayout.rel(SCENE_CROPS, f"{proto_id}.jpg")
-                    self._write_crop(crop_rel, cap.crop)
+                    await run_native(self._write_crop, crop_rel, cap.crop)
                     await self._insert_prototype(
                         proto_id, region_id, state_label, cap.vector,
                         crop_rel, created_by, at,
@@ -1083,14 +1086,12 @@ class StateEvaluator:
 
     def _write_crop(self, rel: str, crop_rgb: np.ndarray) -> None:
         abs_path = self._media_root / rel
-        try:
-            cv2.imwrite(
-                str(abs_path),
-                cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR),
-                [cv2.IMWRITE_JPEG_QUALITY, 90],
-            )
-        except Exception:
-            log.exception("failed to write scene crop %s", abs_path)
+        if not cv2.imwrite(
+            str(abs_path),
+            cv2.cvtColor(crop_rgb, cv2.COLOR_RGB2BGR),
+            [cv2.IMWRITE_JPEG_QUALITY, 90],
+        ):
+            raise OSError(f"failed to write scene crop {abs_path}")
 
     async def _insert_prototype(
         self,
@@ -1125,17 +1126,18 @@ class StateEvaluator:
             )
 
     async def stop(self) -> None:
-        await self._stats.stop()
-        for r in self._readers.values():
-            r.detach()
-        self._readers.clear()
         if self._listener is not None:
             await self._listener.stop()
+        await self._config_tasks.stop()
         if self._nc is not None:
             try:
                 await drain_quietly(self._nc)
             except Exception:
                 log.exception("nats drain raised during shutdown — ignored")
+        await self._stats.stop()
+        for r in self._readers.values():
+            r.detach()
+        self._readers.clear()
         if self._pool is not None:
             try:
                 await self._pool.close()

@@ -120,8 +120,8 @@ describe("zone rules", () => {
     const patchZone = vi.fn().mockImplementationOnce(() => pending.promise)
       .mockImplementation(async (id, patch) => ({ id, ...patch }));
     const scope = {
-      zone: initial, zoneProp: initial, saving: false, error: null,
-      api: { patchZone }, onUpdate: vi.fn(),
+      zone: initial, zoneProp: initial, rulesDirty: false, saving: false, error: null,
+      api: { patchZone }, onUpdate: vi.fn(), onPreview: vi.fn(),
       get enabledClasses() { return this.zone.rules.enabled_classes; },
     };
     const actions = evaluate<CameraActions>("./ZoneRulesCard.svelte", ["commitRules", "setClassRule"], scope);
@@ -134,6 +134,37 @@ describe("zone rules", () => {
     expect(patchZone).toHaveBeenLastCalledWith("Z", {
       rules: { enabled_classes: { person: { min_confidence: 0.7, cooldown_s: 20 } } },
     });
+  });
+
+  it.each(["retry", "next-edit"])("retains rejected rule drafts for %s, including after a parent update", async (action) => {
+    const initial = { id: "Z", name: "Original", rules: { enabled_classes: { person: { min_confidence: 0.5, cooldown_s: 10 } } } };
+    const patchZone = vi.fn().mockRejectedValueOnce(new Error("network offline"))
+      .mockImplementation(async (id, patch) => ({ id, name: "Updated", ...patch }));
+    const scope = {
+      zone: initial, zoneProp: initial, rulesDirty: false, saving: false, error: null,
+      api: { patchZone }, onUpdate: vi.fn(), onPreview: vi.fn(),
+      get enabledClasses() { return this.zone.rules.enabled_classes; },
+      $effect: (fn: () => unknown) => fn(), untrack: (fn: () => unknown) => fn(),
+    };
+    const actions = evaluate<CameraActions>("./ZoneRulesCard.svelte", ["commitRules", "setClassRule"], scope);
+    await actions.setClassRule("person", { cooldown_s: 20 });
+    expect(scope.error).toBe("network offline");
+    expect(scope.saving).toBe(false);
+    expect(scope.zone.rules.enabled_classes.person.cooldown_s).toBe(20);
+    expect(scope.rulesDirty).toBe(true);
+    expect(scope.onUpdate).not.toHaveBeenCalled();
+    scope.zoneProp = { ...initial, name: "Updated" };
+    lifecycle("./ZoneRulesCard.svelte", "const current = zoneProp", scope);
+    expect(scope.zone.name).toBe("Updated");
+    expect(scope.zone.rules.enabled_classes.person.cooldown_s).toBe(20);
+    if (action === "retry") await actions.commitRules(scope.zone.rules);
+    else await actions.setClassRule("person", { min_confidence: 0.7 });
+    expect(patchZone).toHaveBeenLastCalledWith("Z", {
+      rules: { enabled_classes: { person: { cooldown_s: 20, min_confidence: action === "retry" ? 0.5 : 0.7 } } },
+    });
+    expect(scope.rulesDirty).toBe(false);
+    expect(scope.error).toBeNull();
+    expect(scope.onUpdate).toHaveBeenCalledTimes(1);
   });
 
   it("offers camera-enabled classes from the canonical effective rules", async () => {

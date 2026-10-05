@@ -8,6 +8,7 @@ sits on is simulated, so a full host disk never reaches the verdict.
 
 import asyncio
 import logging
+import threading
 from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -141,6 +142,44 @@ def _run(pg: str, media: Path, arrange):
 
 H = timedelta(hours=1)
 D = timedelta(days=1)
+
+
+def test_cancelled_recording_batch_finishes_its_metadata_delete(pg, media, monkeypatch):
+    entered, release = threading.Event(), threading.Event()
+    unlink = supervisor._unlink_recording_files
+
+    def blocked_unlink(*args):
+        entered.set()
+        assert release.wait(3)
+        return unlink(*args)
+
+    monkeypatch.setattr(supervisor, "_unlink_recording_files", blocked_unlink)
+
+    async def main():
+        pool = await asyncpg.create_pool(pg, min_size=1, max_size=2)
+        task = None
+        try:
+            async with pool.acquire() as conn:
+                scene = _Scene(conn, media)
+                segment = await scene.segment(await scene.camera(), 8 * D)
+                svc = object.__new__(RecorderSupervisor)
+                svc._config = SimpleNamespace(media_path=media)
+                task = asyncio.create_task(svc._delete_segments(conn, "id=$1", segment.id))
+                assert await asyncio.to_thread(entered.wait, 2)
+                task.cancel()
+                await asyncio.sleep(.01)
+                assert not task.done()
+                release.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+                assert not await scene.kept(segment)
+        finally:
+            release.set()
+            if task is not None:
+                await asyncio.gather(task, return_exceptions=True)
+            await pool.close()
+
+    asyncio.run(main())
 
 
 def test_footage_past_the_age_cap_goes_file_and_row_together(pg, media, disk):

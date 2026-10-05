@@ -14,7 +14,6 @@ cut → verify → hand to the shared enrolment path. Two doors in:
 
 from __future__ import annotations
 
-import asyncio
 import datetime as _dt
 import json
 import logging
@@ -24,6 +23,7 @@ from uuid import UUID, uuid4
 
 import numpy as np
 from baba_core import cap_long_edge
+from baba_core.native import run_native
 from fastapi import Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
@@ -428,7 +428,7 @@ async def _enrol_from_library(
                     skipped.append(f"{tag}: face too small in preview (<{_MIN_PREVIEW_FACE_PX}px)")
                     continue
                 crop, target_in_crop = cut
-                reason = await asyncio.to_thread(_verify_locked_on_target, face_stack, crop, target_in_crop)
+                reason = await run_native(_verify_locked_on_target, face_stack, crop, target_in_crop)
                 if reason is not None:
                     skipped.append(f"{tag}: {reason}")
                     continue

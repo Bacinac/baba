@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
 from baba_core import group_for
+from baba_core.native import run_native
 from baba_core.paths import CROPS, FACE_CROPS, REFERENCE_PHOTOS, THUMBNAILS
 from baba_core.plates import match_gallery
 from baba_core.retention import LABELLED
 from fastapi import Depends, HTTPException, Query, Request
-from home_core.tasks import spawn
 from pydantic import BaseModel, Field
 
 from baba_api.auth import AuthUser, current_user
@@ -442,14 +441,12 @@ async def delete_all_anon(
             # for minutes, and running them here with no await between the
             # first and the last made the whole api unresponsive for exactly
             # that long — the early return bought nothing but a status code.
-            await asyncio.to_thread(_unlink_all)
+            await run_native(_unlink_all)
             log.info("anon purge done: %d tracks removed", n)
         except Exception:
             log.exception("anon purge failed")
 
-    # spawn keeps a strong reference so the task can't be GC'd mid-purge (a
-    # bare create_task is only weakly held) and its exceptions surface.
-    spawn(_purge(), name="anon-purge")
+    request.app.state.background_tasks.spawn(_purge(), name="anon-purge")
     return {"scheduled": n}
 
 

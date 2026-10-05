@@ -1,6 +1,6 @@
 <script lang="ts">
   import { byLabel } from "$lib/order";
-  import { formatNumber, Button, Card } from "$lib/kit";
+  import { formatNumber, Button, Card, SaveButton } from "$lib/kit";
   import { t } from "$lib/i18n";
   import {
     api,
@@ -28,7 +28,15 @@
   // the parent's next render. untrack() states that the seed is deliberately
   // a one-shot read; the $effect below owns the resync.
   let zone = $state(untrack(() => zoneProp));
-  $effect(() => { zone = zoneProp; });
+  let rulesDirty = $state(false);
+  $effect(() => {
+    const current = zoneProp;
+    const draft = untrack(() => {
+      if (zone.id !== current.id) rulesDirty = false;
+      return rulesDirty ? zone.rules : null;
+    });
+    zone = draft === null ? current : { ...current, rules: draft };
+  });
 
   let saving = $state(false);
   let error = $state<string | null>(null);
@@ -62,11 +70,15 @@
   async function commitRules(next: ZoneRules) {
     if (saving) return;
     const targetId = zone.id;
+    rulesDirty = true;
+    zone = { ...zone, rules: next };
+    onPreview?.(zone);
     saving = true;
     error = null;
     try {
       const updated = await api.patchZone(targetId, { rules: next });
       if (zoneProp.id !== targetId) return;
+      rulesDirty = false;
       zone = updated;
       onUpdate(updated);
     } catch (e) {
@@ -126,6 +138,12 @@
 
   {#if error}
     <p class="mb-2 text-s text-red-400">{error}</p>
+  {/if}
+
+  {#if rulesDirty}
+    <div class="mb-2">
+      <SaveButton dirty={true} {saving} onclick={() => commitRules(zone.rules ?? {})} />
+    </div>
   {/if}
 
   {#if entries.length === 0}

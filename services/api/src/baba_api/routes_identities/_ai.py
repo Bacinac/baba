@@ -9,7 +9,6 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
-from home_core.tasks import spawn
 
 from baba_api.auth import AuthUser, current_user
 from baba_api.routes_ai import _pick_active_provider, _vision_json
@@ -143,12 +142,9 @@ async def ai_describe_identity(
         user_text=_DESCRIBE_USER,
         image_jpeg=image_jpeg,
     )
-    # Stamp last_used_at on the provider row without blocking the response.
-    spawn(
-        pool.execute(
-            "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-            active_provider,
-        )
+    await pool.execute(
+        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
+        active_provider,
     )
     if not result.ok:
         raise HTTPException(502, result.error or "AI call failed")

@@ -9,7 +9,7 @@ from pathlib import Path
 import asyncpg
 from baba_core import make_face_stack_for_model
 from baba_core.face_settings import acknowledge_face_selection, read_face_selection
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from baba_core.pg_listen import ResilientListener
 from fastapi import FastAPI
 from home_core.tasks import spawn
@@ -73,7 +73,7 @@ class ApiFaceActivation:
                 if not path:
                     raise RuntimeError("Face detector is not configured")
                 if getattr(state, "face_loaded_pair", None) != pair:
-                    stack, detector, model = await run_inference(
+                    stack, detector, model = await run_native(
                         make_face_stack_for_model,
                         yunet_path=Path(path), models_dir=Path("/models"),
                         model_key=selection.model_key, detector_key=selection.detector_key,

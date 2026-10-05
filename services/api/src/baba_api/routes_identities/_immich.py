@@ -9,13 +9,13 @@ crop → verify → hand to the shared enrollment path.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Any
 from uuid import UUID
 
 import numpy as np
+from baba_core.native import run_native
 from fastapi import Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -375,7 +375,7 @@ async def reference_photos_from_immich(
                     continue
                 crop, target_in_crop = cut
 
-                reason = await asyncio.to_thread(
+                reason = await run_native(
                     _verify_locked_on_target, face_stack, crop, target_in_crop
                 )
                 if reason is not None:

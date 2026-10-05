@@ -31,6 +31,7 @@ from uuid import UUID
 
 import cv2
 import numpy as np
+from baba_core.native import run_native
 from baba_core.occupancy import demote_rival_places, reconcile_places
 from baba_core.paths import PLATE_CROPS, MediaLayout
 from baba_core.plates import (
@@ -944,7 +945,7 @@ class PlateReader:
             here = [at for at in targets if seg["started_at"] <= at < seg_end]
             if not here:
                 continue
-            used, found = await asyncio.to_thread(
+            used, found = await run_native(
                 self._scan_segment,
                 self._media_root / seg["path"],
                 seg["started_at"],
@@ -1408,5 +1409,4 @@ def _owner_box(
     if not samples:
         return None
     return tuple(v * scale for v in _bbox_at(samples, at))  # type: ignore[return-value]
-
 

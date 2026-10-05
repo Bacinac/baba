@@ -9,13 +9,13 @@ and only get_providers() tells. So every branch runs on any image.
 """
 
 import sys
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
 import pytest
 from baba_backend_onnxruntime.backend import ONNXRuntimeBackend
 from baba_core import RING_PIXEL_FORMAT, build_variant, onnx_session
 from baba_core.backend import BackendConfig
-from baba_core.onnx_session import make_session, ort_provider
+from baba_core.onnx_session import check_bound_provider, make_session, ort_provider
 from baba_core.variant import VARIANTS
 
 CUDA = "CUDAExecutionProvider"
@@ -50,7 +50,32 @@ class _FakeOrt:
             get_providers=lambda: bound,
             get_inputs=lambda: [],
             get_outputs=lambda: [],
+            disable_fallback=lambda: None,
         )
+
+
+def test_native_execution_failure_cannot_rebind_the_session_to_cpu():
+    from onnxruntime.capi import _pybind_state as runtime
+    from onnxruntime.capi.onnxruntime_inference_collection import InferenceSession, Session
+
+    rebinds = []
+
+    def fail(*args):
+        raise runtime.EPFail("GPU execution failed")
+
+    session = SimpleNamespace(
+        _enable_fallback=True, _sess=SimpleNamespace(run=fail),
+        _providers=[CUDA], _fallback_providers=[CPU],
+        _outputs_meta=[SimpleNamespace(name="output")],
+        get_providers=lambda: [CUDA], set_providers=lambda providers: rebinds.append(providers),
+        _validate_graph_capture_run_api=lambda *_: None,
+        _validate_input=lambda *_: None, _validate_ortvalue_ownership=lambda *_: None,
+    )
+    session.disable_fallback = MethodType(Session.disable_fallback, session)
+    check_bound_provider(session, CUDA, "test")
+    with pytest.raises(runtime.EPFail, match="GPU execution failed"):
+        InferenceSession.run(session, ["output"], {})
+    assert not rebinds
 
 
 @pytest.fixture

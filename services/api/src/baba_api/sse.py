@@ -26,7 +26,6 @@ from baba_core.pg_listen import ResilientListener
 from baba_core.wire import DetectionsMessage, TracksMessage
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
-from home_core.tasks import spawn
 
 from baba_api.auth import current_user
 from baba_api.phantom_view import PhantomView
@@ -46,7 +45,7 @@ _SSE_HEADERS = {
 # going away is actually noticed.
 _HEARTBEAT_S = 20.0
 
-def _detach(coro) -> None:
+def _detach(request: Request, coro) -> None:
     """Run a stream's teardown OUTSIDE the generator that is being torn down.
 
     Starlette closes the generator when the client hangs up, so the `finally`
@@ -65,7 +64,7 @@ def _detach(coro) -> None:
     reset. Handing the coroutine to a FRESH task is what works, because that
     task is not the thing being cancelled.
     """
-    spawn(coro, name="sse-teardown", log=log)
+    request.app.state.background_tasks.spawn(coro, name="sse-teardown")
 
 
 async def _drain_nats(sub, nc, subject: str) -> None:
@@ -131,7 +130,7 @@ async def _nats_sse(
                 continue
             yield f"data: {payload}\n\n"
     finally:
-        _detach(_drain_nats(sub, nc, subject))
+        _detach(request, _drain_nats(sub, nc, subject))
 
 
 class _NotifyHub:
@@ -217,7 +216,7 @@ async def _notify_sse(request: Request, channel: str, *, name: str) -> AsyncIter
                 continue
             yield f"data: {payload}\n\n"
     finally:
-        _detach(_release_hub(hub, queue, name))
+        _detach(request, _release_hub(hub, queue, name))
 
 
 @sse_router.get("/sse/detections")

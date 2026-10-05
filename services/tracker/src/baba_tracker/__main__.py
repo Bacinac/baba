@@ -51,6 +51,7 @@ import numpy as np
 from baba_core import StatsCollector, drain_quietly, mask_credentials, setup_logging
 from baba_core.embed import OSNetOnnxBackend
 from baba_core.frame_ring import PIXEL_FORMAT_NV12, FrameRingReader, RingFrame
+from baba_core.native import run_native
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.phantom_match import DEFAULT_MIN_BIRTHS as PHANTOM_DEFAULT_MIN_BIRTHS
 from baba_core.phantom_match import DEFAULT_MIN_SPAN_S as PHANTOM_DEFAULT_MIN_SPAN_S
@@ -1973,7 +1974,7 @@ class TrackerService:
             with self.stats.timer("reid_ms"):
                 return reid.embed(crops)
 
-        return await asyncio.get_running_loop().run_in_executor(self._osnet, run)
+        return await run_native(run, executor=self._osnet)
 
     async def _embed_at(
         self, frame: RingFrame, bbox: tuple[float, float, float, float]

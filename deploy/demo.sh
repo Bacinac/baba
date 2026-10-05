@@ -41,7 +41,8 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 echo "== scrubbing the recording =="
-python3 "$ROOT/demo/scrub_fixtures.py" "$RECORDING" "$WORK/fixtures.json"
+BABA_DEMO_WORK="$WORK" "$ROOT/scripts/demo-python.sh" \
+    "$ROOT/demo/scrub_fixtures.py" "$RECORDING" "$WORK/fixtures.json"
 
 echo "== building the demo at $(git -C "$ROOT" rev-parse --short HEAD) =="
 "$ROOT/web/build-demo.sh" "$WORK/fixtures.json" "$WORK/site"

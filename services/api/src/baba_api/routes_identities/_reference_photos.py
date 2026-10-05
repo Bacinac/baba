@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Iterable
 from dataclasses import dataclass, fields
@@ -13,6 +12,7 @@ from uuid import UUID, uuid4
 import cv2
 import numpy as np
 from baba_core.face import FRONTALITY_MAX
+from baba_core.native import run_native
 from baba_core.paths import REFERENCE_PHOTOS
 from baba_core.retention import ENROLLED
 from fastapi import Depends, File, HTTPException, Request, UploadFile
@@ -328,7 +328,7 @@ async def _face_only_candidates(
         # These crops ARE the aligned face, so the box is the whole photo.
         c.face_bbox = [[0.0, 0.0, 1.0, 1.0] if v is not None else None for v in c.face]
     else:
-        c.face, c.face_px, c.face_bbox = await asyncio.to_thread(
+        c.face, c.face_px, c.face_bbox = await run_native(
             _embed_faces, face_stack, c.crops
         )
     skipped = [
@@ -364,7 +364,7 @@ async def _body_vectors(
     # ONNX inference is synchronous and can take hundreds of ms for a batch of
     # 64 — run it off the event loop so the whole API doesn't stall for the
     # duration (the embedder service does the same).
-    return await asyncio.to_thread(backend.embed, crops)
+    return await run_native(backend.embed, crops)
 
 
 async def _drop_near_duplicates(
@@ -406,7 +406,7 @@ async def _faces_on_bodies(
     condition. Pets and vehicles are exempt by nature: they have no face, body
     IS their only signal, and their references are enrolled deliberately per
     subject."""
-    c.face, c.face_px, c.face_bbox = await asyncio.to_thread(
+    c.face, c.face_px, c.face_bbox = await run_native(
         _embed_faces, face_stack, c.crops
     )
     for i in c.small_faces():
@@ -657,7 +657,7 @@ async def _persist_reference_photos(
             return await _no_op_result(pool, global_id, user, source, skipped)
     n_faces = sum(1 for v in c.face if v is not None)
 
-    saved = await asyncio.to_thread(_write_reference_jpegs, state.config.media_path, c.crops)
+    saved = await run_native(_write_reference_jpegs, state.config.media_path, c.crops)
     async with pool.acquire() as conn, conn.transaction():
         row = await _insert_reference_rows(
             conn, global_id, user, source, c, saved, face_model_key

@@ -42,11 +42,12 @@ from baba_core import (
 )
 from baba_core.embed import EmbeddingBackend, make_backend
 from baba_core.face_settings import acknowledge_face_selection, read_face_selection
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.paths import CROPS, FACE_CROPS, MediaLayout
 from baba_core.pg_listen import ResilientListener
 from baba_core.runtime import run_service
+from baba_core.task_owner import TaskOwner
 from baba_core.wire import TracksMessage as _TracksMessage
 from baba_core.wire import TrackWire as _TrackWire
 from home_core.health import HealthMarker
@@ -301,6 +302,7 @@ class Embedder:
         self._stats = StatsCollector(service="embedder")
         self._decoder = msgspec.msgpack.Decoder(_TracksMessage)
         self._listener: ResilientListener | None = None
+        self._config_tasks = TaskOwner("embedder-config", log)
         self._media_root = media_root
         layout = MediaLayout(media_root)
         self._crops_dir = layout.crops
@@ -341,7 +343,7 @@ class Embedder:
         if channel == "face_recognition_changed":
             self._reload_requested.set()
         else:
-            spawn(self._refresh_cameras())
+            self._config_tasks.spawn(self._refresh_cameras())
 
     async def _refresh_cameras(self) -> None:
         assert self._pool is not None
@@ -373,7 +375,7 @@ class Embedder:
                     path = os.environ.get("BABA_FACE_DETECTOR_MODEL", "").strip()
                     if not path:
                         raise RuntimeError("face detector is not configured")
-                    stack, detector, model = await run_inference(
+                    stack, detector, model = await run_native(
                         make_face_stack_for_model, yunet_path=Path(path), models_dir=Path("/models"),
                         model_key=selection.model_key, detector_key=selection.detector_key,
                     )
@@ -491,7 +493,7 @@ class Embedder:
         # drift. Punt to the default executor so the loop stays live.
         self._stats.incr("crops", len(crops))
         with self._stats.timer("embed_ms"):
-            embeddings = await run_inference(self._backend.embed, crops)
+            embeddings = await run_native(self._backend.embed, crops)
         self._stats.incr("embeddings_out", len(crops))
         # Stamp debounce only on tracks we actually embedded.
         for t in meta:
@@ -586,7 +588,7 @@ class Embedder:
                                     self._face.detector.detect(aligned) is not None))
                     return out
 
-                results = await run_inference(_run_faces)
+                results = await run_native(_run_faces)
                 for i, vec, aligned, score, px, frontality, realigned in results:
                     face_scores[i] = score
                     face_pxs[i] = px
@@ -674,6 +676,9 @@ class Embedder:
         )
 
     async def stop(self) -> None:
+        if self._listener is not None:
+            await self._listener.stop()
+        await self._config_tasks.stop()
         if self._reload_task is not None:
             self._reload_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -681,11 +686,6 @@ class Embedder:
         self._native_stop.set()
         await self._stop_native_reader()
         await self._stats.stop()
-        for r in self._readers.values():
-            r.detach()
-        self._readers.clear()
-        if self._listener is not None:
-            await self._listener.stop()
         if self._nc is not None:
             # Drain can raise ConnectionReconnectingError when NATS is
             # already in the process of reconnecting (the path that
@@ -699,6 +699,9 @@ class Embedder:
                 await drain_quietly(self._nc)
             except Exception:
                 log.exception("nats drain raised during shutdown — ignored")
+        for r in self._readers.values():
+            r.detach()
+        self._readers.clear()
         if self._pool is not None:
             try:
                 await self._pool.close()

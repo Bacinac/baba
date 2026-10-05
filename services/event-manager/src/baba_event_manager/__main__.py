@@ -34,6 +34,7 @@ from baba_core.pg_listen import ResilientListener
 from baba_core.pipeline_settings import Settings, publish_defaults
 from baba_core.retention import ANONYMOUS, ENROLLED, tier_sql
 from baba_core.runtime import run_service
+from baba_core.task_owner import TaskOwner
 from baba_core.tunables import REID_KEY, REID_TUNABLES
 from baba_core.wire import SUBJECT_TELEMETRY_WILDCARD, TrackWire
 from baba_core.wire import TracksMessage as _TracksMessage
@@ -209,6 +210,7 @@ class EventManager:
         self._state: dict[str, dict[int, TrackState]] = {}
         self._state_lock = asyncio.Lock()
         self._finalizations = FinalizationQueue(self._stats)
+        self._notification_tasks = TaskOwner("event-manager-config", log)
         self._pool: asyncpg.Pool | None = None
         self._resolver = CameraResolver()
         self._zones: ZonesResolver | None = None
@@ -387,6 +389,7 @@ class EventManager:
 
         if self._listener is not None:
             await self._listener.stop()
+        await self._notification_tasks.stop()
         await self._stats.stop()
         await drain_quietly(self._nc)
         await self._finalize_all_pending()
@@ -500,7 +503,7 @@ class EventManager:
                     # on darkness never saw a dark.
                     await self._refresh_light_conditions(c)
 
-        spawn(go())
+        self._notification_tasks.spawn(go())
 
     async def _refresh_tunables(self) -> None:
         """Re-read `reid_defaults` and rebuild the config from it.

@@ -12,22 +12,35 @@ set -euo pipefail
 
 FIXTURES="${1:?usage: build-demo.sh <scrubbed-fixtures.json> [out-dir] [stills-dir]}"
 WEB="$(cd "$(dirname "$0")" && pwd)"
+SOURCE_WEB="$WEB"
+ROOT="$(cd "$WEB/.." && pwd)"
 OUT="${2:-$WEB/demo-dist}"
 STILLS="${3:-$WEB/../demo/stills}"
 
 [[ -f "$FIXTURES" ]] || { echo "no fixtures at $FIXTURES" >&2; exit 1; }
 
+FIXTURES="$(realpath "$FIXTURES")"
+STILLS="$(realpath "$STILLS")"
+OUT="$(realpath -m "$OUT")"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+WEB="$WORK/web"
+mkdir -p "$WEB" "$OUT"
+tar -C "$SOURCE_WEB" -c --exclude=./node_modules --exclude=./build --exclude=./demo-dist --exclude=./.svelte-kit . | tar -x -C "$WEB"
+export BABA_DEMO_WORK="$WORK" BABA_DEMO_OUTPUT="$OUT" BABA_DEMO_INPUT="$FIXTURES" BABA_DEMO_STILLS="$STILLS"
+BABA_DEMO_PYTHON_IMAGE=$(docker build -q -f "$ROOT/docker/demo-python.Dockerfile" "$ROOT")
+export BABA_DEMO_PYTHON_IMAGE
+
 cd "$WEB"
-trap 'rm -f static/demo-fixtures.json' EXIT
 cp "$FIXTURES" static/demo-fixtures.json
 
 # Merge synthetic demo content (Scene-states example regions) into the fixtures.
 # Keyed by camera SLUG in demo-extras.json; resolved to camera_id here so the
 # tracked template carries no instance data. Runs BEFORE the privacy gate so the
 # synthetic rows are scanned too. Skips gracefully if the file is absent.
-EXTRAS="$WEB/../demo/demo-extras.json"
+EXTRAS="$ROOT/demo/demo-extras.json"
 if [[ -f "$EXTRAS" ]]; then
-  python3 - static/demo-fixtures.json "$EXTRAS" <<'PY'
+  "$ROOT/scripts/demo-python.sh" - "$WEB/static/demo-fixtures.json" "$EXTRAS" <<'PY'
 import json, sys
 fx_path, ex_path = sys.argv[1], sys.argv[2]
 fx = json.load(open(fx_path))
@@ -55,19 +68,20 @@ PY
 fi
 
 # Fail-CLOSED: refuse to build if any secret / IP / real name survived the scrub.
-python3 "$WEB/../demo/privacy_gate.py" static/demo-fixtures.json
+"$ROOT/scripts/demo-python.sh" "$ROOT/demo/privacy_gate.py" "$WEB/static/demo-fixtures.json"
 # The same deny list every public push answers to (the live household, plates,
 # MACs, secrets), found through the clone's own config: required, not optional.
-GATE=$(git -C "$WEB" config --get publicgate.command) \
+GATE=$(git -C "$ROOT" config --get publicgate.command) \
     || { echo "no publicgate.command in this clone — the demo is not built unchecked" >&2; exit 1; }
-find "$STILLS" -type f -print0 2>/dev/null | xargs -0 "$GATE" scan --files static/demo-fixtures.json
+(
+  cd "$ROOT"
+  find "$STILLS" -type f -print0 | xargs -0 "$GATE" scan --files "$WEB/static/demo-fixtures.json"
+)
 
 # Inject the shim into the placeholder app.html carries for exactly this purpose.
-cp src/app.html src/app.html.bak
-trap 'mv -f src/app.html.bak src/app.html; rm -f static/demo-fixtures.json' EXIT
 sed -i 's|<!--DEMO_NET-->|<script src="/demo-net.js"></script>|' src/app.html
 
-WIMG=$(docker build -q --target deps -f "$WEB/Dockerfile" "$WEB/..")
+WIMG=$(docker build -q --target deps -f "$SOURCE_WEB/Dockerfile" "$ROOT")
 rm -rf "$OUT"
 mkdir -p "$OUT"
 docker run --rm -e BABA_DEMO=1 -e VITE_BABA_DEMO=1 -e npm_config_update_notifier=false \
@@ -79,7 +93,7 @@ docker run --rm -e BABA_DEMO=1 -e VITE_BABA_DEMO=1 -e npm_config_update_notifier
 # id (from the recorded /cameras fixture) to its blurred still (named by slug) and
 # write it as a REAL FILE at that exact path — the demo-net.js passthrough lets the
 # request reach the static server. Also drop it at /snapshot for poster frames.
-python3 - "$FIXTURES" "$STILLS" "$OUT" <<'PY'
+"$ROOT/scripts/demo-python.sh" - "$FIXTURES" "$STILLS" "$OUT" <<'PY'
 import json, sys, shutil, pathlib
 fixtures, stills, out = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 cams = json.load(open(fixtures)).get("/cameras", [])
@@ -105,7 +119,7 @@ PY
 # wins over the /api/crops/* -> demo-crop.jpg fallback). Makes the reference
 # thumbnails show actual (blurred) imagery per state — a trained-looking region.
 if [[ -f "$EXTRAS" ]]; then
-  python3 - "$FIXTURES" "$EXTRAS" "$STILLS" "$OUT" <<'PY'
+  "$ROOT/scripts/demo-python.sh" - "$FIXTURES" "$EXTRAS" "$STILLS" "$OUT" <<'PY'
 import json, sys, pathlib
 from PIL import Image
 fixtures, ex_path, stills, out = sys.argv[1], sys.argv[2], pathlib.Path(sys.argv[3]), pathlib.Path(sys.argv[4])
@@ -145,8 +159,8 @@ printf '/api/cameras/*\n  Content-Type: image/jpeg\n' > "$OUT/_headers"
 # (an Activity replay must show the camera it fired on, not one shared clip).
 # CF Pages _redirects rewrites the dynamic paths; the SPA catch-all is last and
 # never shadows an existing static file.
-cp "$WEB/../demo/media/demo-crop.jpg" "$OUT/demo-crop.jpg"
-python3 - "$FIXTURES" "$WEB/../demo/media" "$OUT" <<'PYX'
+cp "$ROOT/demo/media/demo-crop.jpg" "$OUT/demo-crop.jpg"
+"$ROOT/scripts/demo-python.sh" - "$FIXTURES" "$ROOT/demo/media" "$OUT" <<'PYX'
 import json, sys, shutil, pathlib
 fixtures, media, out = sys.argv[1], pathlib.Path(sys.argv[2]), pathlib.Path(sys.argv[3])
 cams = json.load(open(fixtures)).get("/cameras", [])

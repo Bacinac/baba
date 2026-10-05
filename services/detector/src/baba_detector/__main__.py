@@ -27,7 +27,7 @@ from baba_core import (
 from baba_core.detection_gate import GateRules
 from baba_core.detection_gate import classify as gate_classify
 from baba_core.detection_gate import size_pct as gate_size_pct
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.runtime import run_service
 from baba_core.wire import (
@@ -486,7 +486,7 @@ class _Pipeline:
                 # tick and telemetry for its whole duration. Awaited one at
                 # a time, so the backend still sees strictly serial infer()
                 # calls (single CUDA/OV context, no concurrent execution).
-                output = await run_inference(self._backend.infer, tensor)
+                output = await run_native(self._backend.infer, tensor)
             for j, (f_idx, spec, _) in enumerate(chunk):
                 ctx = PostprocessContext(
                     original_width=spec.width,

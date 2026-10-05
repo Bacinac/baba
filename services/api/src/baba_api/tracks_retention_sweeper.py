@@ -36,7 +36,9 @@ import os
 from pathlib import Path
 
 import asyncpg
+from baba_core.native import run_native
 from baba_core.retention import ANONYMOUS, tier_sql
+from baba_core.task_owner import finish_on_cancel
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +88,12 @@ async def _prune_one_batch(
     """One batch: read N expired rows, unlink their media off the event loop,
     then delete only the rows whose files are actually gone. Returns the number
     of rows deleted so the outer loop knows whether to keep draining."""
+    return await finish_on_cancel(
+        _prune_track_transaction(pool, media_root, batch_size), name="track-retention-batch", log=log,
+    )
+
+
+async def _prune_track_transaction(pool, media_root: Path, batch_size: int) -> int:
     async with pool.acquire() as conn, conn.transaction():
         return await _prune_locked_tracks(conn, media_root, batch_size)
 
@@ -125,7 +133,7 @@ async def _prune_locked_tracks(conn, media_root: Path, batch_size: int) -> int:
             paths.extend(r["sample_face_crops"])
         row_paths[r["id"]] = paths
 
-    deletable = await asyncio.to_thread(_unlink_row_media, media_root, row_paths)
+    deletable = await run_native(_unlink_row_media, media_root, row_paths)
     if not deletable:
         return 0
     await conn.execute(
@@ -156,6 +164,12 @@ async def _prune_closed(pool: asyncpg.Pool, table: str, ended: str, batch_size: 
 async def _prune_plate_reads(pool: asyncpg.Pool, media_root: Path, batch_size: int) -> int:
     """One batch of expired plate reads: crop off disk first, then only the rows
     whose crop is gone."""
+    return await finish_on_cancel(
+        _prune_plate_transaction(pool, media_root, batch_size), name="plate-retention-batch", log=log,
+    )
+
+
+async def _prune_plate_transaction(pool, media_root: Path, batch_size: int) -> int:
     async with pool.acquire() as conn, conn.transaction():
         return await _prune_locked_plate_reads(conn, media_root, batch_size)
 
@@ -177,7 +191,7 @@ async def _prune_locked_plate_reads(conn, media_root: Path, batch_size: int) -> 
     if not rows:
         return 0
     row_paths = {r["id"]: [r["crop_path"]] if r["crop_path"] else [] for r in rows}
-    deletable = await asyncio.to_thread(_unlink_row_media, media_root, row_paths)
+    deletable = await run_native(_unlink_row_media, media_root, row_paths)
     if deletable:
         await conn.execute("DELETE FROM plate_reads WHERE id = ANY($1::uuid[])", deletable)
     return len(deletable)

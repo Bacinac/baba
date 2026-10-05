@@ -27,7 +27,7 @@ from uuid import UUID
 import asyncpg
 from baba_core.pg_listen import ResilientListener
 from baba_core.rule_resolve import ClassRule, resolve
-from home_core.tasks import spawn
+from baba_core.task_owner import TaskOwner
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +66,7 @@ class DetectionRules:
         # slug → uuid.  Detector keys by slug; we need uuid for the
         # per_camera lookup.  Refreshed on cameras_changed.
         self._uuid_by_slug: dict[str, UUID] = {}
+        self._tasks = TaskOwner("detector-rules", log)
         # slug → per-camera maintain-confidence floor (cameras.maintain_conf,
         # NOT NULL).  The two-threshold tracker keeps a track alive down to
         # this floor; it's per-camera (and light-profiled) so night IR can
@@ -103,6 +104,7 @@ class DetectionRules:
         if self._listener is not None:
             await self._listener.stop()
             self._listener = None
+        await self._tasks.stop()
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
@@ -155,9 +157,9 @@ class DetectionRules:
     def _on_notify(self, channel: str, payload: str) -> None:
         # asyncpg notify callbacks can't await; schedule the right refresh.
         if channel == "cameras_changed":
-            spawn(self._refresh_cameras_safe())
+            self._tasks.spawn(self._refresh_cameras_safe())
         else:
-            spawn(self._refresh_all_safe())
+            self._tasks.spawn(self._refresh_all_safe())
 
     async def _refresh_all_safe(self) -> None:
         try:

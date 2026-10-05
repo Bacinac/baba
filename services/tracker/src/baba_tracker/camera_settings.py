@@ -28,6 +28,7 @@ from typing import Any
 import asyncpg
 from baba_core.pg_listen import ResilientListener
 from baba_core.pipeline_settings import Settings, publish_defaults
+from baba_core.task_owner import TaskOwner
 
 log = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class CameraSettings:
         self._on_change = on_change
         self._pool: asyncpg.Pool | None = None
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("tracker-camera-settings", log)
         self._by_slug: dict[str, CameraMotion] = {}
         # app_settings.tracking_defaults — None until loaded (fall through
         # to the env defaults the callers pass in).
@@ -89,6 +91,7 @@ class CameraSettings:
         if self._listener is not None:
             await self._listener.stop()
             self._listener = None
+        await self._tasks.stop()
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
@@ -125,9 +128,7 @@ class CameraSettings:
     # --- refresh plumbing --------------------------------------------------
 
     def _schedule_refresh(self) -> None:
-        from home_core.tasks import spawn
-
-        spawn(self._refresh_safe())
+        self._tasks.spawn(self._refresh_safe())
 
     async def _refresh_safe(self) -> None:
         try:

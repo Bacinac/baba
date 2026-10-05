@@ -27,8 +27,8 @@ from uuid import UUID
 
 import httpx
 import numpy as np
+from baba_core.native import run_native
 from fastapi import APIRouter, HTTPException, Request
-from home_core.tasks import spawn
 from PIL import Image
 
 from baba_api.ai_provider import (
@@ -555,11 +555,9 @@ async def suggest_zones(
         user_text=_build_user_prompt(cam["name"], locale),
         image_jpeg=snapshot,
     )
-    spawn(
-        pool.execute(
-            "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-            active_provider,
-        )
+    await pool.execute(
+        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
+        active_provider,
     )
 
     if not result.ok:
@@ -577,7 +575,7 @@ async def suggest_zones(
         # something completely off-format. Truncate to avoid spamming.
         log.info(
             "suggest-zones: provider=%s model=%s parsed 0 zones from %d-char response: %r",
-            active_provider,
+        active_provider,
             result.model or model,
             len(result.text or ""),
             (result.text or "")[:400],
@@ -592,12 +590,12 @@ async def suggest_zones(
     # First use reads and compiles two ONNX models for the Arc. Doing that
     # inline froze the whole api — every request, every SSE stream — for as
     # long as the compile took.
-    sam2 = await asyncio.to_thread(_get_sam2, request)
+    sam2 = await run_native(_get_sam2, request)
     if sam2 is not None and suggestions:
         try:
             rgb = await asyncio.to_thread(_jpeg_to_rgb, snapshot)
             t0 = time.perf_counter()
-            refined, accepted, rejected = await asyncio.to_thread(
+            refined, accepted, rejected = await run_native(
                 _refine_with_sam2_sync,
                 sam2,
                 rgb,
@@ -702,7 +700,7 @@ async def segment_at_point(
     # First use reads and compiles two ONNX models for the Arc. Doing that
     # inline froze the whole api — every request, every SSE stream — for as
     # long as the compile took.
-    sam2 = await asyncio.to_thread(_get_sam2, request)
+    sam2 = await run_native(_get_sam2, request)
     if sam2 is None:
         raise HTTPException(
             503,
@@ -723,7 +721,7 @@ async def segment_at_point(
     t0 = time.perf_counter()
     rgb = await asyncio.to_thread(_jpeg_to_rgb, snapshot)
     try:
-        polygon = await asyncio.to_thread(
+        polygon = await run_native(
             _segment_at_point_sync,
             sam2,
             rgb,
@@ -862,11 +860,9 @@ async def classify_polygon(
         user_text=user_text,
         image_jpeg=annotated,
     )
-    spawn(
-        pool.execute(
-            "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
+    await pool.execute(
+        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
             active_provider,
-        )
     )
 
     if not result.ok:
@@ -1107,11 +1103,9 @@ async def tune_zone_rules(
         system=_TUNE_SYSTEM,
         user_text=user_text,
     )
-    spawn(
-        _pool(request).execute(
-            "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-            active_provider,
-        )
+    await _pool(request).execute(
+        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
+        active_provider,
     )
     if not result.ok:
         return TuneZoneRulesOut(

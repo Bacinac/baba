@@ -8,6 +8,7 @@ import os
 from urllib.parse import parse_qs, urlsplit
 
 import asyncpg
+from baba_core.task_owner import TaskOwner
 from home_core.tasks import spawn
 from reolink_aio.api import Host
 from reolink_aio.exceptions import ReolinkError
@@ -52,6 +53,7 @@ class DoorbellSubscriber:
         self._cfg = config
         self._pool: asyncpg.Pool | None = None
         self._tasks: list[asyncio.Task] = []
+        self._rings = TaskOwner("doorbell-rings", log)
         self._stop = asyncio.Event()
 
     async def start(self) -> None:
@@ -79,10 +81,7 @@ class DoorbellSubscriber:
                 f"(cameras: {[r['slug'] for r in known]})"
             )
         if not self._cfg.slugs:
-            log.warning(
-                "no doorbell cameras configured (BABA_DOORBELL_SLUGS is empty) "
-                "— idling healthy; set the variable if this install has a bell"
-            )
+            log.info("doorbell disabled: no cameras configured")
         for row in rows:
             task = spawn(self._run_camera(dict(row)), name=f"doorbell-{row['slug']}", log=log)
             task.add_done_callback(self._camera_died)
@@ -104,6 +103,7 @@ class DoorbellSubscriber:
         for t in self._tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await t
+        await self._rings.stop(cancel=False)
         if self._pool is not None:
             await self._pool.close()
 
@@ -137,7 +137,7 @@ class DoorbellSubscriber:
                     def _on_push(h=h, state=state) -> None:
                         cur = bool(h.visitor_detected(0))
                         if cur and not state["last"]:
-                            spawn(self._insert_ring(camera_id, slug, "baichuan"))
+                            self._rings.spawn(self._insert_ring(camera_id, slug, "baichuan"))
                         state["last"] = cur
 
                     h.baichuan.register_callback("dida-doorbell", _on_push)

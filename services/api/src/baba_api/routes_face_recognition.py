@@ -32,7 +32,7 @@ from baba_core import (
     resolve_model_path,
     vector_literal,
 )
-from baba_core.inference import run_inference
+from baba_core.native import run_native
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -479,7 +479,7 @@ async def _run_recompute(
         # Load + warmup is blocking (ONNX session init, possibly a TRT engine
         # build); keep it off the event loop so live WebRTC/SSE/requests don't
         # freeze for seconds while a recompute job spins up.
-        stack, active_detector, active_key = await run_inference(
+        stack, active_detector, active_key = await run_native(
             make_face_stack_for_model,
             yunet_path=yunet_path,
             models_dir=_MODELS_DIR,
@@ -508,7 +508,7 @@ async def _run_recompute(
             path = media_root / r["photo_path"]
             aligned = r["source"] in _ALIGNED_FACE_SOURCES
             result = (
-                await run_inference(_reembed, stack, path, aligned)
+                await run_native(_reembed, stack, path, aligned)
                 if path.exists()
                 else "missing"
             )

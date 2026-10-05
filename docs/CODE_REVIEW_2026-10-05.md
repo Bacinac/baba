@@ -101,6 +101,78 @@ A rebuilt CPU API image ran against disposable PostgreSQL 18, NATS and go2rtc wi
 
 Both rebuilt services ran without source overlays against disposable PostgreSQL 18, real NATS, go2rtc and a synthetic JPEG endpoint, with fabricated credentials and no host ports. Seven observations of three person tracks produced a correlated parked/unparked pair. Authenticated HTTP reads returned its UUID and observed class before track persistence. Restarting the event manager persisted all three tracks and their finalization events exactly once; the motion events kept their IDs and class and gained duration and thumbnail metadata. Both services restarted healthy and completed shutdown without warnings or errors. All disposable containers and their network were removed. Separate vehicle arrival/departure UUIDs and majority-class changes are covered by the PostgreSQL regressions; this runtime does not exercise cameras, GPU inference or model quality.
 
+## Remaining lifecycle coverage and documentation — 5 October 2026
+
+The 21 baseline findings and F01–F08 were published in version 1.0.24 (`ecc4e03a`). This publication bundle adds F09–F16, closing the remaining review gaps requested as “nastavi sa svim”: **all 37 corrections are implemented and locally verified**. The running revision and rollout status are reported by `/version` and `deploy/deploy.sh --status`.
+
+Final continuation checks: **69 targeted Python cases** across the four changed test files, including real PostgreSQL concurrency; **29 frontend concurrency cases** and Svelte zero errors/warnings. Fresh CPU base and all nine changed service images were built. API and event-manager exchanged real NATS observations and authenticated HTTP event responses, restarted, and closed cleanly. Ingestor, recorder and doorbell started and restarted their real supervisors against isolated PostgreSQL/NATS with no enabled cameras. Baked detector-rule, tracker-settings/zone, scene and embedder owners each started and stopped twice; scene/embedding model objects were substituted in those lifecycle checks. No source-package overlays were used. All disposable runtime containers and networks were removed.
+
+The production web image was also rebuilt, served its compiled application through the real Node server, proxied authenticated login/camera requests to the isolated API, and restarted successfully. The demo build, changed-file Ruff, shell syntax, all three Compose variants and public-content gate passed. Real target evidence includes Intel Arc OpenVINO model startup and seven VAAPI decoders, plus an isolated OSNet CUDA run with fallback disabled: its profiler recorded **391 CUDA nodes**, no CPU nodes, finite `16 × 512` output and input dimensions read from the loaded engine. These checks do not constitute a recognition-quality or throughput benchmark. The NVIDIA reference remained parked and no production configuration or model selection was changed.
+
+### P2 F09 Native-operation protection misses scene, plate, tracker and API work
+
+**Evidence:** Scene embeddings, plate inference, the tracker's dedicated OSNet executor and API search/reference/SAM2 paths still used cancellable thread awaits. Cancelling such an await releases its surrounding lock while the native operation continues. The scene watchdog depends on configured evaluable regions and does not protect an interactive capture with none configured.
+
+**Correction:** [Native operations](../core/src/baba_core/native.py) share one deadline and cancellation ownership implementation, with an optional dedicated executor and copied request context. Scene, plate, tracker and API model operations use it, as do media mutations that must finish before releasing resources. The former inference-only implementation is removed. Relevant services have a 150-second shutdown grace period for the 120-second native deadline.
+
+**Verification:** Controlled cancellation retains the real scene lock and dedicated executor until the native thread ends. A child process exercising the actual scene embedding path exits on deadline with no configured regions. Existing cancelled-operation and native-exception regressions remain covered.
+
+### P2 F10 Background work outlives service pools and readers
+
+**Evidence:** Notification handlers and supervisor loops kept global task references but were not awaited by their service before resource closure. API accepted cleanup jobs, SSE teardown and doorbell push inserts had the same lifetime gap. A notification already queued at listener shutdown could admit more work.
+
+**Correction:** [TaskOwner](../core/src/baba_core/task_owner.py) closes admission and joins work owned by each service or component. Configuration owners cancel obsolete reads before pool closure; accepted API cleanup and doorbell inserts finish normally. API provider-usage writes are awaited directly. Listener dispatch rejects queued notifications after stop. Embedder and scene evaluator drain subscriptions before detaching frame readers. An installation without a doorbell reports normal disabled status at INFO; configured camera names still require validation.
+
+**Verification:** Tests block actual bridge callbacks and SSE cleanup, then verify their completion before owner shutdown returns. Native work delays owner shutdown until its thread finishes; late callbacks are closed without being scheduled. Failed updates retain visible logging and completed tasks release their references.
+
+### P2 F11 Cancellation breaks retention's file and metadata boundary
+
+**Evidence:** Cancelling a track or plate retention await could release its transaction's row locks while unlinking continued in another thread. Waiting only for that thread still rolls the transaction back after files have disappeared, leaving durable rows pointing at missing media. Recorder batches had a corresponding gap between file and row deletion.
+
+**Correction:** Track and plate transactions finish as owned batches before cancellation is reported. Recorder retention and disk-prune batches finish their corresponding metadata deletion; an accepted purge owns its complete mutation. Native unlinking remains deadline-protected. The batch owner and service pool lifetime are coordinated rather than shielding only the filesystem call.
+
+**Verification:** Real PostgreSQL tests cancel blocked track and plate deletion, prove that concurrent `FOR UPDATE NOWAIT` cannot claim their rows, release the worker, and confirm that both media and metadata are gone. A recording-batch cancellation regression proves the same file/metadata completion boundary.
+
+### P2 F12 Scene enrolment persists references to failed JPEG writes
+
+**Evidence:** `_write_crop` ignored a false `cv2.imwrite` return and swallowed write exceptions. Capture then inserted a prototype referring to a file that did not exist.
+
+**Correction:** Crop writes propagate failure, run as owned native operations, and precede prototype insertion. Capture returns its existing visible error response when writing fails.
+
+**Verification:** The real capture handler receives a failed OpenCV write; its response reports the failure, no prototype is inserted, and no in-memory prototype is adopted.
+
+### P2 F13 A failed zone-rule save discards the operator's draft
+
+**Evidence:** A rejected save discarded the edited cooldown; retry or another edit could submit the old value. Parent refreshes could also overwrite that draft. The event API's TypeScript duration field additionally omitted the null value used while a track is pending.
+
+**Correction:** The zone's rule draft is retained before submission, survives same-zone refreshes, and has an explicit save retry. Successful save or navigation clears its dirty state. Pending event duration is typed as nullable.
+
+**Verification:** Two deferred-response frontend regressions cover retry and subsequent editing after rejection, including a parent refresh. All 29 cases in the changed concurrency file pass; Svelte reports zero errors and warnings.
+
+### P2 F14 Demo builds use host tools and temporarily mutate application source
+
+**Evidence:** Demo scrubbing/build steps invoked host Python/Pillow and rewrote `app.html` and fixtures in the canonical checkout during a build. Concurrent development or an interrupted build could observe or retain that temporary source.
+
+**Correction:** A container-only helper uses Python 3.14 and Pillow from the existing dependency lock with wheel hashes. Build changes happen in a disposable web tree; privacy gates remain mandatory, resolve policy from the canonical repository context, and produce a separate output artifact.
+
+**Verification:** A complete local demo build passed both privacy gates, wired seven camera stills and clips, and wrote 18 prototype thumbnails. The source template hash and fixture absence were unchanged. No public demo was published during this continuation.
+
+### P3 F15 The roadmap describes missing components that are already implemented
+
+**Evidence:** The July roadmap claimed Intel software decoding, no test framework, no idempotent finalization, no retention sweeper, no backup/restore and no shared formatting. It also mixed historical model proposals with the current runtime and counted 37 migrations.
+
+**Correction:** The local project guide `ROADMAP.md` now links to this canonical correction record, records source-backed component status and separates future product work from review defects. The local project instructions point at the current documents; the published architecture includes RF-DETR and cancellation ownership.
+
+**Verification:** Source paths confirm Intel VAAPI/Quick Sync, container test gates, retry/idempotent writers, both retention implementations, backup/restore, shared UI formatting and 108 migrations. Read-only production logs independently confirm the detector on Intel Arc A380 and VAAPI decode on seven cameras.
+
+### P2 F16 ONNX Runtime can retry failed GPU execution on CPU
+
+**Evidence:** The provider guard checked initialization only. The installed SDK's real `InferenceSession.run` catches execution-provider failure and can rebind to fallback providers before retrying. A successfully initialized CUDA session therefore did not enforce the application's failure policy throughout execution.
+
+**Correction:** The canonical provider guard disables runtime fallback after checking the bound provider, covering both the small-model session factory and ONNX Runtime detector backend.
+
+**Verification:** A regression invokes the installed SDK's actual execution method with an injected provider failure and proves that the exception escapes without rebinding. A separate isolated NVIDIA model run confirms successful CUDA execution with fallback disabled; its input dimensions come from loaded model metadata.
+
 ## Review baseline
 
 | Item | Value |
@@ -414,7 +486,7 @@ The principles state that body embeddings identify people across cameras and day
 3. **Make recovery and configuration deterministic:** findings 06–10, 12, 13, 18 and 19. Coordinate model activation, make health reflect in-flight work, close failed connection/process attempts, reconcile all settings, enforce single-use recovery and constrain expensive media work.
 4. **Correct asynchronous editing and navigation:** findings 14–17 and 20, then align documentation in 21. Cover late responses, disposal and multi-field edits with controlled scheduling.
 
-This was the implementation order for the original baseline. The full set has now been addressed and deployed; the follow-up section distinguishes the additional working-tree corrections.
+This was the implementation order for the original baseline. The full set has now been addressed and deployed; the follow-up sections distinguish published corrections from the latest working-tree changes.
 
 ## Architecture and maintainability assessment
 
@@ -430,6 +502,6 @@ The shared-memory writer already invalidates a slot before overwriting pixels an
 
 The findings describe the reviewed checkout and reproducible failure conditions. They do not establish how often any defect has occurred in production. Live configuration can override file defaults; the production model and recording checks above describe the verified deployment snapshot, not an inference from defaults or a hardware performance assessment.
 
-Hardware-specific inference, decoder drivers, camera reconnect behaviour under real network loss, learned-model quality, recording throughput and disk failure behaviour require target-host checks. Fresh migration success does not prove every upgrade path from an existing populated database. Dependency and image vulnerability scanning and a complete weights-license assessment were outside the executed checks.
+Target checks now include production OpenVINO/VAAPI startup evidence and an isolated OSNet CUDA execution. They do not measure learned-model quality, camera reconnect behaviour under injected network loss, recording throughput or disk-failure recovery. Fresh migration success does not prove every upgrade path or restoration of a populated database. Required publication gates executed dependency CVE and secret scans for the published corrections; a complete container-image vulnerability and weights-license audit remains outside the executed checks.
 
 The review is complete as a repository-wide source assessment with targeted verification. It is not an end-to-end production acceptance result. The report is the canonical record for these findings; project memory should link here rather than maintain a second copy of the review.

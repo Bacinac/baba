@@ -16,7 +16,6 @@ face search on top in a separate endpoint once there's UX for it.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -24,6 +23,7 @@ from uuid import UUID
 
 import numpy as np
 from baba_core import vector_literal
+from baba_core.native import run_native
 from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel
 
@@ -118,7 +118,7 @@ async def search_visual(
     # to the model input itself); returns an L2-normalized (N, dim) float32 array.
     try:
         # Blocking ONNX forward — keep it off the event loop.
-        vectors = await asyncio.to_thread(backend.embed, [crop])
+        vectors = await run_native(backend.embed, [crop])
     except Exception:
         log.exception("search: embedder failed on query image")
         raise HTTPException(500, "embedder failed to process query image") from None

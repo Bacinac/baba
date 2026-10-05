@@ -90,6 +90,8 @@ class ResilientListener:
     # --- internals ---
 
     def _dispatch(self, _conn, _pid, channel, payload) -> None:
+        if self._stopping:
+            return
         try:
             self._on_notify(channel, payload)
         except Exception:

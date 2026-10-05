@@ -26,7 +26,7 @@ from uuid import UUID
 
 import asyncpg
 from baba_core.pg_listen import ResilientListener
-from home_core.tasks import spawn
+from baba_core.task_owner import TaskOwner
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,7 @@ class EventsNatsBridge:
         self._pool = pool
         self._nc = nc
         self._listener: ResilientListener | None = None
+        self._tasks = TaskOwner("api-events-bridge", log)
 
     async def start(self) -> None:
         self._listener = ResilientListener(
@@ -52,7 +53,7 @@ class EventsNatsBridge:
 
     def _on_notify(self, _channel: str, payload: str) -> None:
         # Can't await inside the asyncpg notify callback — hand off to the loop.
-        spawn(self._publish(payload))
+        self._tasks.spawn(self._publish(payload))
 
     async def _publish(self, payload_text: str) -> None:
         try:
@@ -134,3 +135,4 @@ class EventsNatsBridge:
     async def stop(self) -> None:
         if self._listener is not None:
             await self._listener.stop()
+        await self._tasks.stop()
