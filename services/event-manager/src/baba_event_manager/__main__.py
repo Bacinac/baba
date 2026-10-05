@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import copy
 import json
 import logging
 import signal
@@ -31,7 +32,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 import asyncpg
 import msgspec
@@ -44,6 +45,7 @@ from baba_core import (
     drain_quietly,
     setup_logging,
 )
+from baba_core.classes import class_id_for_name
 from baba_core.event_kinds import EventKind
 from baba_core.face import set_canonical_face
 from baba_core.nats_conn import connect as nats_connect
@@ -221,6 +223,15 @@ class _Closed:
         return datetime.fromtimestamp(self.end_ns / 1e9, tz=UTC)
 
 
+@dataclass(slots=True)
+class _PendingTrack:
+    camera: str
+    local_id: int
+    record: TrackState
+    source: TrackState
+    parked: bool
+
+
 class EventManager:
     def __init__(self, config: EventManagerConfig) -> None:
         self._config = config
@@ -236,6 +247,8 @@ class EventManager:
         # state[camera_slug][local_track_id] = TrackState
         self._state: dict[str, dict[int, TrackState]] = {}
         self._state_lock = asyncio.Lock()
+        self._pending_finalizations: dict[UUID, _PendingTrack] = {}
+        self._finalization_lock = asyncio.Lock()
         self._pool: asyncpg.Pool | None = None
         self._resolver = CameraResolver()
         self._zones: ZonesResolver | None = None
@@ -432,6 +445,8 @@ class EventManager:
             await self._zones.refresh(c)
             await self._refresh_scene_regions(c)
             await self._refresh_light_conditions(c)
+        await self._refresh_tunables()
+        await self._refresh_face_threshold()
 
     async def _refresh_light_conditions(self, c) -> None:
         """Seed + refresh each camera's illumination band on the snapshot.
@@ -536,13 +551,9 @@ class EventManager:
         from dataclasses import replace
 
         assert self._pool is not None
-        try:
-            raw = await self._pool.fetchval(
-                "SELECT value FROM app_settings WHERE key = $1", REID_KEY
-            )
-        except Exception:
-            log.exception("reid tunables refresh failed — keeping current values")
-            return
+        raw = await self._pool.fetchval(
+            "SELECT value FROM app_settings WHERE key = $1", REID_KEY
+        )
         self._tunables.apply(raw)
         updated = {
             name: (
@@ -564,16 +575,12 @@ class EventManager:
         from dataclasses import replace
 
         assert self._pool is not None
-        try:
-            row = await self._pool.fetchrow(
-                "SELECT match_threshold, model_key FROM face_recognition_settings WHERE id = 1"
-            )
-        except Exception:
-            log.exception("face threshold refresh failed — keeping %.3f",
-                          self._config.reid_face_cosine_threshold)
-            return
-        if row is None or row["match_threshold"] is None:
-            return
+        row = await self._pool.fetchrow(
+            "SELECT active_match_threshold AS match_threshold, active_model_key AS model_key "
+            "FROM face_recognition_settings WHERE id = 1"
+        )
+        if row is None:
+            raise RuntimeError("face_recognition_settings singleton missing")
         value = float(row["match_threshold"])
         model_key = row["model_key"] or self._config.face_embedding_model
         if (
@@ -616,74 +623,33 @@ class EventManager:
         return True
 
     async def _emit_zone_event(
-        self,
-        camera_slug: str,
-        kind: EventKind,
-        zone_id: Any,
-        track_id: int,
-        bbox: tuple[float, float, float, float],
-        timestamp_ns: int,
-        class_name: str | None = None,
-        db_track_id: UUID | None = None,
+        self, camera_slug: str, kind: EventKind, zone_id: Any, track_id: int,
+        bbox: tuple[float, float, float, float], timestamp_ns: int,
+        class_name: str | None = None, db_track_id: UUID | None = None,
     ) -> None:
-        """Insert a zone_enter / zone_exit row into the events table.
-        Same shape as track_finalized rows so existing readers (api WS,
-        rules dispatcher, frontend) need no special-case logic. The
-        payload carries the zone metadata so the UI can render
-        "Person entered Parking" without joining the zones table.
-
-        `db_track_id` is the pre-allocated UUID that the finalize path
-        will use as `tracks.id` — stamping it into `events.track_id`
-        here lets the Sightings page stitch zone visits to the eventual
-        track row. It's optional only because object_parked/_unparked
-        also go through this helper without a track context, but for
-        zone_enter/zone_exit the caller must supply it.
-        """
         assert self._pool is not None and self._zones is not None
         cam = await self._resolver.get(camera_slug)
         if cam is None:
             return
-        # object_parked / object_unparked aren't zone-scoped; the rest
-        # of the event types are. Skip the zones lookup when zone_id is
-        # None and emit a slimmer payload.
-        if zone_id is None:
-            zone_payload: dict[str, Any] = {
-                "bbox": list(bbox),
-                "class_name": class_name,
-                "track_id": str(track_id),
-            }
-        else:
+        payload: dict[str, Any] = {
+            "bbox": list(bbox), "class_name": class_name,
+            "class_id": class_id_for_name(class_name), "track_id": str(track_id),
+        }
+        if zone_id is not None:
             zone = self._zones.zone_meta(camera_slug, zone_id)
-            zone_payload = {
-                "zone_id": str(zone_id),
-                "zone_name": zone.name if zone is not None else None,
-                "zone_kind": zone.kind if zone is not None else None,
-                "bbox": list(bbox),
-                "class_name": class_name,
-                "track_id": str(track_id),
-            }
-        at_dt = datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC)
-        try:
-            await self._pool.execute(
-                """
-                INSERT INTO events (camera_id, track_id, kind, at, payload)
-                VALUES ($1, $2, $3, $4, $5::jsonb)
-                """,
-                cam.id,
-                db_track_id,
-                kind,
-                at_dt,
-                json.dumps(zone_payload),
-            )
+            payload.update({
+                "zone_id": str(zone_id), "zone_name": zone.name if zone else None,
+                "zone_kind": zone.kind if zone else None,
+            })
+        event_id = uuid5(cam.id, f"{db_track_id or track_id}:{kind}:{zone_id}:{timestamp_ns}")
+        status = await self._pool.execute(
+            "INSERT INTO events (id, camera_id, track_id, kind, at, payload) "
+            "VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (id) DO NOTHING",
+            event_id, cam.id, db_track_id, kind,
+            datetime.fromtimestamp(timestamp_ns / 1e9, tz=UTC), json.dumps(payload),
+        )
+        if status == "INSERT 0 1":
             self._stats.incr("events")
-        except Exception:
-            log.exception(
-                "failed to emit %s event for camera=%s zone=%s track=%s",
-                kind,
-                camera_slug,
-                zone_id,
-                track_id,
-            )
 
     async def _observe(self, msg: _TracksMessage) -> None:
         # NB: do NOT early-return on an empty tracks message. An empty frame is
@@ -775,29 +741,19 @@ class EventManager:
             await self._publish_snapshot(msg, cam)
 
     async def _retire_older_generations(self, msg: _TracksMessage) -> None:
-        """Finalize every record from an older tracker generation.
-
-        If this camera's tracker restarted (or recreated its Norfair instance),
-        its track ids restart from a low value and a new subject can reuse an
-        id still live here. Finalizing the older generation before the reused
-        id is processed keeps two different subjects from merging into one
-        track.
-        """
         if not msg.epoch:
             return
-        expired: list[tuple[int, TrackState]] = []
+        retired = False
         async with self._state_lock:
             cam = self._state.get(msg.camera_id, {})
             for tid, rec in list(cam.items()):
                 if rec.epoch and rec.epoch < msg.epoch:
-                    cam.pop(tid, None)
                     if not rec.parked_finalized:
-                        expired.append((tid, rec))
-        for tid, rec in expired:
-            try:
-                await self._finalize(msg.camera_id, tid, rec)
-            except Exception:
-                log.exception("epoch finalize failed cam=%s tid=%s", msg.camera_id, tid)
+                        self._queue_finalization(msg.camera_id, tid, rec)
+                    cam.pop(tid)
+                    retired = True
+        if retired:
+            await self._drain_finalizations()
 
     def _continued_record(
         self, cam: dict[int, TrackState], msg: _TracksMessage, t: TrackWire
@@ -1728,96 +1684,84 @@ class EventManager:
             await asyncio.sleep(30)
 
     async def _sweep_loop(self) -> None:
-        timeout_ns = self._config.track_timeout_ms * 1_000_000
         while True:
             await asyncio.sleep(1.0)
-            now_ns = time.time_ns()
-            stale: list[tuple[str, int, TrackState]] = []
-            parked: list[tuple[str, int, TrackState]] = []
-            async with self._state_lock:
-                for cam_slug, tracks in self._state.items():
-                    drop = []
-                    for tid, rec in tracks.items():
-                        if now_ns - rec.last_seen_ns > timeout_ns:
-                            drop.append(tid)
-                        elif rec.park_finalize_due:
-                            # Claim it here, under the lock, so a second pass
-                            # cannot queue the same record twice.
-                            rec.park_finalize_due = False
-                            rec.parked_finalized = True
-                            parked.append((cam_slug, tid, rec))
-                    for tid in drop:
-                        rec = tracks.pop(tid)
-                        # Already written when it parked; the tracker simply
-                        # stopped emitting it. Finalizing again would file the
-                        # same visit twice.
+            await self._sweep_once()
+
+    def _queue_finalization(self, camera: str, local_id: int, rec: TrackState,
+                            parked: bool = False) -> None:
+        if rec.db_track_id is None:
+            rec.db_track_id = uuid4()
+        if rec.db_track_id not in self._pending_finalizations:
+            self._pending_finalizations[rec.db_track_id] = _PendingTrack(
+                camera, local_id, copy.deepcopy(rec), rec, parked
+            )
+
+    async def _sweep_once(self) -> None:
+        now_ns = time.time_ns()
+        timeout_ns = self._config.track_timeout_ms * 1_000_000
+        async with self._state_lock:
+            for camera, tracks in self._state.items():
+                for local_id, rec in list(tracks.items()):
+                    if now_ns - rec.last_seen_ns > timeout_ns:
                         if not rec.parked_finalized:
-                            stale.append((cam_slug, tid, rec))
-            for cam_slug, tid, rec in stale + parked:
+                            self._queue_finalization(camera, local_id, rec)
+                        tracks.pop(local_id)
+                    elif rec.park_finalize_due:
+                        rec.park_finalize_due = False
+                        self._queue_finalization(camera, local_id, rec, parked=True)
+        await self._drain_finalizations()
+
+    async def _drain_finalizations(self) -> None:
+        async with self._finalization_lock:
+            for track_id, item in list(self._pending_finalizations.items()):
                 try:
-                    await self._finalize(cam_slug, tid, rec)
+                    await self._finalize(item.camera, item.local_id, item.record)
                 except Exception:
-                    log.exception("finalize failed cam=%s tid=%s", cam_slug, tid)
+                    log.exception("finalization pending cam=%s tid=%s", item.camera, item.local_id)
+                    continue
+                if item.parked:
+                    item.source.parked_finalized = True
+                    item.source.inside_zones.clear()
+                    item.source.enter_emitted.clear()
+                    item.source.dwell_emitted.clear()
+                self._pending_finalizations.pop(track_id)
+            self._stats.set_gauge("finalization_pending", len(self._pending_finalizations))
 
     async def _finalize_all_pending(self) -> None:
         async with self._state_lock:
-            items = [
-                (cam, tid, rec)
-                for cam, tracks in self._state.items()
-                for tid, rec in tracks.items()
-                # Parked vehicles were written when they stopped; on shutdown
-                # they are still in the map only so a restart-free tracker
-                # cannot re-birth them. Writing them again would duplicate.
-                if not rec.parked_finalized
-            ]
+            for camera, tracks in self._state.items():
+                for local_id, rec in tracks.items():
+                    if not rec.parked_finalized:
+                        self._queue_finalization(camera, local_id, rec)
             self._state.clear()
-        for cam, tid, rec in items:
-            try:
-                await self._finalize(cam, tid, rec)
-            except Exception:
-                log.exception("finalize-on-shutdown failed cam=%s tid=%s", cam, tid)
+        deadline = time.monotonic() + 10.0
+        while self._pending_finalizations:
+            await self._drain_finalizations()
+            if not self._pending_finalizations:
+                return
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"shutdown has {len(self._pending_finalizations)} uncommitted tracks")
+            await asyncio.sleep(1.0)
 
     async def _record_suppressed(self, local_tid: int, rec: TrackState, closed: _Closed) -> None:
-        """Write a hidden track as the fact it is, tagged with what hid it.
-
-        The row carries no thumbnail, no embedding claim and no identity —
-        skipping that work is what the filter is FOR, and it is the whole cost
-        of a parked car flickering in and out of its own box. What a filter may
-        not cost is the record: the place registry, the plate sweep, re-ID and
-        every later "did the camera see this?" read these rows, and for years
-        the answer to the last one was reconstructable only from the continuous
-        recording.
-        """
-        if self._pool is None or rec.db_track_id is None:
-            return
-        try:
-            await self._pool.execute(
-                """
-                INSERT INTO tracks_all (id, camera_id, local_track_id, class_id, class_name,
-                                        started_at, ended_at, n_observations,
-                                        ever_active, came_to_rest, suppressed_reason,
-                                        retain_until)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                        $7::timestamptz + $12::interval)
-                ON CONFLICT (id) DO NOTHING
-                """,
-                rec.db_track_id,
-                closed.cam.id,
-                local_tid,
-                rec.class_id,
-                rec.class_name,
-                closed.started_at,
-                closed.ended_at,
-                rec.n_observations,
-                rec.ever_active,
-                rec.came_to_rest,
-                closed.hidden_by,
-                ANONYMOUS,
-            )
-        except Exception:
-            log.exception("suppressed-track insert failed for %s", rec.db_track_id)
-            return
-        self._stats.incr("tracks_suppressed")
+        assert self._pool is not None and rec.db_track_id is not None
+        inserted = await self._pool.fetchval(
+            """
+            INSERT INTO tracks_all (id, camera_id, local_track_id, class_id, class_name,
+                                    started_at, ended_at, n_observations,
+                                    ever_active, came_to_rest, suppressed_reason,
+                                    retain_until)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                    $7::timestamptz + $12::interval)
+            ON CONFLICT (id) DO NOTHING RETURNING id
+            """,
+            rec.db_track_id, closed.cam.id, local_tid, rec.class_id, rec.class_name,
+            closed.started_at, closed.ended_at, rec.n_observations, rec.ever_active,
+            rec.came_to_rest, closed.hidden_by, ANONYMOUS,
+        )
+        if inserted is not None:
+            self._stats.incr("tracks_suppressed")
 
     async def _close_zones(self, cam_slug: str, local_tid: int, rec: TrackState) -> None:
         """zone_exit for every zone the track was still inside when we lost
@@ -1835,6 +1779,7 @@ class EventManager:
                     local_tid,
                     rec.last_bbox,
                     rec.last_seen_ns,
+                    class_name=rec.class_name,
                     db_track_id=rec.db_track_id,
                 )
         rec.inside_zones.clear()
@@ -2002,13 +1947,9 @@ class EventManager:
             await self._record_suppressed(local_tid, rec, closed)
             return
 
-        # Reuse the UUID we pre-allocated when this track was first
-        # observed. Zone events emitted during the track's lifetime
-        # already carry this UUID in `events.track_id`, so the Sightings
-        # page can stitch zone visits to the track row without a
-        # backfill step. Fall back to a fresh UUID only if the state
-        # somehow lost it (legacy path; shouldn't happen post-fix).
-        track_id = rec.db_track_id or uuid4()
+        track_id = rec.db_track_id
+        if track_id is None:
+            raise RuntimeError("finalization requires a reserved track UUID")
         rel_path = await self._thumbnail(cam_slug, closed, rec, track_id)
         assert self._pool is not None
         async with self._pool.acquire() as conn:  # noqa: SIM117 (kept nested on purpose)
@@ -2016,6 +1957,8 @@ class EventManager:
                 n_samples = await self._persist_track(
                     conn, closed, local_tid, rec, track_id, rel_path
                 )
+                if n_samples is None:
+                    return
                 naming = await name_track(
                     conn,
                     self._config,
@@ -2095,15 +2038,16 @@ class EventManager:
         rec: TrackState,
         track_id: UUID,
         rel_path: str | None,
-    ) -> int:
+    ) -> int | None:
         """The track row, the embedding samples it claims and its canonical
         body and face embeddings. Returns how many samples it holds."""
-        await conn.execute(
+        inserted = await conn.fetchval(
             """
             INSERT INTO tracks_all (id, camera_id, local_track_id, class_id, class_name,
                                 started_at, ended_at, n_observations, thumbnail_path,
                                 ever_active, came_to_rest)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (id) DO NOTHING RETURNING id
             """,
             track_id,
             closed.cam.id,
@@ -2117,6 +2061,8 @@ class EventManager:
             rec.ever_active,
             rec.came_to_rest,
         )
+        if inserted is None:
+            return None
         # Claim every embedding sample produced during this track's
         # lifetime (camera + local_track_id, within ±2s of the
         # finalized track window). The padding absorbs the small
@@ -2328,59 +2274,8 @@ class EventManager:
         )
 
 
-async def _override_threshold_from_db(config: EventManagerConfig) -> EventManagerConfig:
-    """If face_recognition_settings is present (migration 032+), override
-    the face cosine threshold from there. Lets the Settings UI drive
-    matching strictness without env-var edits + redeploy.
-
-    Falls through silently when:
-      • DB unreachable at startup (treated as transient — event-manager
-        will retry the rest of its DB connections through its asyncpg
-        pool a moment later)
-      • table not yet created (older install, migrations haven't been
-        applied yet — env value stays in force)
-      • singleton row absent
-    """
-    from dataclasses import replace
-
-    try:
-        conn = await asyncpg.connect(config.dsn)
-    except (OSError, asyncpg.PostgresError) as e:
-        log.warning("face threshold DB lookup failed (connect): %s", e)
-        return config
-    try:
-        try:
-            row = await conn.fetchrow(
-                "SELECT match_threshold, model_key FROM face_recognition_settings WHERE id = 1"
-            )
-        except asyncpg.exceptions.UndefinedTableError:
-            return config
-        if row is None:
-            return config
-        db_value = float(row["match_threshold"])
-        model_key = row["model_key"] or config.face_embedding_model
-        if abs(db_value - config.reid_face_cosine_threshold) > 1e-6:
-            log.info(
-                "face match threshold overridden from DB: %.3f → %.3f",
-                config.reid_face_cosine_threshold,
-                db_value,
-            )
-        if model_key != config.face_embedding_model:
-            log.info(
-                "active face embedder from DB: %s → %s",
-                config.face_embedding_model,
-                model_key,
-            )
-        return replace(
-            config, reid_face_cosine_threshold=db_value, face_embedding_model=model_key
-        )
-    finally:
-        await conn.close()
-
-
 async def _run() -> None:
     config = EventManagerConfig.from_env()
-    config = await _override_threshold_from_db(config)
     await EventManager(config).run()
 
 

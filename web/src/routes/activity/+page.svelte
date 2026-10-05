@@ -1,6 +1,6 @@
 <script lang="ts">
   import { byLabel } from "$lib/order";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { api, cameraClipUrl, thumbnailUrl, eventsFeed,
     type BabaEvent, type Camera, type Recording, type Sighting,
     type SuppressedTrack,
@@ -262,25 +262,34 @@
     liveTimer = setTimeout(() => { liveTimer = null; load(true); }, 1500);
   }
 
-  onMount(async () => {
-    try { cameras = await api.listCameras(); } catch (e) { console.error(e); }
-    // The events SSE fires on EVERY event insert (zone enter/exit, parked, …).
-    // A sighting only appears/extends on `track_finalized`, so gate on that —
-    // otherwise every zone crossing would trigger a full refetch. Respect the
-    // camera filter too (the NOTIFY payload carries camera_id).
-    feed = eventsFeed({
-      message: (p) => {
-        if (p.kind !== "track_finalized") return;
-        if (cameraFilter && p.camera_id !== cameraFilter) return;
-        scheduleLiveRefresh();
-      },
-      resync: scheduleLiveRefresh,
-    });
-  });
+  onMount(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await api.listCameras();
+        if (!cancelled) cameras = result;
+      } catch (e) { if (!cancelled) console.error(e); }
+      if (cancelled) return;
+      // The events SSE fires on EVERY event insert (zone enter/exit, parked, …).
+      // A sighting only appears/extends on `track_finalized`, so gate on that —
+      // otherwise every zone crossing would trigger a full refetch. Respect the
+      // camera filter too (the NOTIFY payload carries camera_id).
+      feed = eventsFeed({
+        message: (p) => {
+          if (cancelled) return;
+          if (p.kind !== "track_finalized") return;
+          if (cameraFilter && p.camera_id !== cameraFilter) return;
+          scheduleLiveRefresh();
+        },
+        resync: () => { if (!cancelled) scheduleLiveRefresh(); },
+      });
+    })();
 
-  onDestroy(() => {
-    feed?.close();
-    if (liveTimer) clearTimeout(liveTimer);
+    return () => {
+      cancelled = true;
+      feed?.close();
+      if (liveTimer) clearTimeout(liveTimer);
+    };
   });
 
   // --- formatting helpers ---

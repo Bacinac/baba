@@ -171,7 +171,12 @@ class CameraRecorder:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            try:
+                stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+            finally:
+                if proc.returncode is None:
+                    proc.kill()
+                    await proc.wait()
         except (TimeoutError, FileNotFoundError, OSError) as e:
             log.warning("recorder %s: ffprobe failed: %s", self._spec.slug, e)
             return None

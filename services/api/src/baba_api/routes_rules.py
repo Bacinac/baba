@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
+from baba_core.classes import COCO_CLASSES
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from baba_api.audit import write_audit
 from baba_api.auth import AuthUser, current_user
@@ -50,11 +51,19 @@ class RuleOut(BaseModel):
     updated_at: datetime
 
 
+class RuleFilter(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    camera_ids: list[UUID] = Field(default_factory=list)
+    class_ids: list[Annotated[int, Field(strict=True, ge=0, lt=len(COCO_CLASSES))]] = Field(
+        default_factory=list
+    )
+
+
 class RuleIn(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     enabled: bool = True
     event_kind: str | None = Field(default="track_finalized", max_length=64)
-    filter: dict[str, Any] = Field(default_factory=dict)
+    filter: RuleFilter = Field(default_factory=RuleFilter)
     channel_ids: list[UUID] = Field(default_factory=list)
 
 
@@ -62,8 +71,15 @@ class RulePatch(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     enabled: bool | None = None
     event_kind: str | None = Field(default=None, max_length=64)
-    filter: dict[str, Any] | None = None
+    filter: RuleFilter | None = None
     channel_ids: list[UUID] | None = None
+
+    @field_validator("name", "enabled", "filter", "channel_ids", mode="before")
+    @classmethod
+    def _not_null(cls, value):
+        if value is None:
+            raise ValueError("field cannot be null")
+        return value
 
 
 def _row_to_rule(row: Any) -> RuleOut:
@@ -87,20 +103,6 @@ def _row_to_rule(row: Any) -> RuleOut:
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
-
-
-def _validate_filter(filter_: dict[str, Any]) -> None:
-    """Conservative validator — reject unknown top-level keys so the
-    operator doesn't silently configure a filter the dispatcher won't
-    honour. Loose on values (uuid/int strings tolerated; the dispatcher
-    coerces). Whitelist mirrors what rules_dispatcher actually reads."""
-    allowed = {"camera_ids", "class_ids"}
-    extra = set(filter_) - allowed
-    if extra:
-        raise HTTPException(
-            400,
-            f"unknown filter keys: {sorted(extra)}; allowed: {sorted(allowed)}",
-        )
 
 
 @rules_router.get("/notifications/rules", response_model=list[RuleOut])
@@ -131,7 +133,6 @@ async def create_rule(
             "rule create with unknown event_kind=%s — will never fire until the pipeline emits it",
             payload.event_kind,
         )
-    _validate_filter(payload.filter)
     import json as _json
 
     row = await request.app.state.pool.fetchrow(
@@ -145,7 +146,7 @@ async def create_rule(
         payload.name,
         payload.enabled,
         payload.event_kind,
-        _json.dumps(payload.filter),
+        _json.dumps(payload.filter.model_dump(mode="json")),
         [str(c) for c in payload.channel_ids],
     )
     await write_audit(
@@ -173,12 +174,9 @@ async def patch_rule(
     request: Request,
     user: AuthUser = Depends(current_user),
 ) -> RuleOut:
-    fields = payload.model_dump(exclude_unset=True)
+    fields = payload.model_dump(mode="json", exclude_unset=True)
     if not fields:
         raise HTTPException(400, "no fields to update")
-    if "filter" in fields and fields["filter"] is not None:
-        _validate_filter(fields["filter"])
-
     import json as _json
 
     set_clauses: list[str] = []

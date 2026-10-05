@@ -23,9 +23,58 @@
   let threshold = $state(0.4);
 
   let activeJob = $state<FaceRecomputeStatus | null>(null);
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let startingRecompute = $state(false);
+  let pendingRecompute: { model: string; detector: string } | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let activationTimer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  let settingsSeq = 0;
+
+  function activationReady(): boolean {
+    return !!settings && settings.activation_status === "active" &&
+      settings.active_model_key === settings.model_key &&
+      settings.active_detector_key === settings.detector_key;
+  }
+
+  function scheduleActivation() {
+    if (activationTimer !== null) clearTimeout(activationTimer);
+    activationTimer = null;
+    if (!disposed && settings?.activation_status === "pending") {
+      activationTimer = setTimeout(pollActivation, 1500);
+    }
+  }
+
+  async function recomputeIfActivated() {
+    if (!pendingRecompute || !settings || disposed) return;
+    if (settings.model_key !== pendingRecompute.model ||
+        settings.detector_key !== pendingRecompute.detector ||
+        settings.activation_status === "error") {
+      pendingRecompute = null;
+      return;
+    }
+    if (!activationReady()) return;
+    pendingRecompute = null;
+    await startRecompute();
+  }
+
+  async function pollActivation() {
+    if (activationTimer !== null) clearTimeout(activationTimer);
+    activationTimer = null;
+    const seq = settingsSeq;
+    try {
+      const current = await api.getFaceRecognitionSettings();
+      if (disposed || seq !== settingsSeq) return;
+      settings = current;
+      await recomputeIfActivated();
+    } catch (e) {
+      if (!disposed && seq === settingsSeq) error = (e as Error).message;
+    } finally {
+      if (!disposed && seq === settingsSeq) scheduleActivation();
+    }
+  }
 
   async function refresh() {
+    const seq = ++settingsSeq;
     loading = true;
     error = null;
     try {
@@ -34,22 +83,27 @@
         api.listFaceDetectors(),
         api.getFaceRecognitionSettings(),
       ]);
+      if (disposed || seq !== settingsSeq) return;
       models = modelsList;
       detectors = detectorsList;
       settings = current;
       modelKey = current.model_key;
       detectorKey = current.detector_key;
       threshold = current.match_threshold;
+      scheduleActivation();
     } catch (e) {
-      error = (e as Error).message;
+      if (!disposed && seq === settingsSeq) error = (e as Error).message;
     } finally {
-      loading = false;
+      if (!disposed && seq === settingsSeq) loading = false;
     }
   }
 
   onMount(refresh);
   onDestroy(() => {
-    if (pollTimer !== null) clearInterval(pollTimer);
+    disposed = true;
+    settingsSeq++;
+    if (pollTimer !== null) clearTimeout(pollTimer);
+    if (activationTimer !== null) clearTimeout(activationTimer);
   });
 
   function selectedModel(): FaceModel | null {
@@ -79,10 +133,11 @@
   }
 
   function modelChangeRequiresRecompute(): boolean {
-    return !!settings && modelKey !== settings.model_key;
+    return !!settings && (modelKey !== settings.model_key || detectorKey !== settings.detector_key);
   }
 
   async function save() {
+    if (disposed || saving || startingRecompute || activeJob?.status === "running") return;
     const m = selectedModel();
     if (m && !m.bundled_with_baba && !m.file_present) {
       error =
@@ -97,56 +152,70 @@
         t("fr_weights_missing_suffix");
       return;
     }
-    // Whether this save changes the model or detector — if so, all
-    // existing reference embeddings are now stale (different model space
-    // or different face crops). We auto-trigger recompute after save so
-    // the user doesn't have to remember the manual button.
     const wasModelChange =
       !!settings &&
-      (modelKey !== settings.model_key || detectorKey !== settings.detector_key);
+      (modelKey !== settings.model_key || detectorKey !== settings.detector_key ||
+        modelKey !== settings.active_model_key || detectorKey !== settings.active_detector_key);
+    const body = { model_key: modelKey, detector_key: detectorKey, match_threshold: threshold };
+    const seq = ++settingsSeq;
+    if (activationTimer !== null) clearTimeout(activationTimer);
+    activationTimer = null;
     saving = true;
     error = null;
     try {
-      settings = await api.saveFaceRecognitionSettings({
-        model_key: modelKey,
-        detector_key: detectorKey,
-        match_threshold: threshold,
-      });
+      const current = await api.saveFaceRecognitionSettings(body);
+      if (disposed || seq !== settingsSeq) return;
+      settings = current;
       modelKey = settings.model_key;
       detectorKey = settings.detector_key;
       threshold = settings.match_threshold;
       if (wasModelChange) {
-        await startRecompute();
+        pendingRecompute = { model: body.model_key, detector: body.detector_key };
+      }
+      await recomputeIfActivated();
+    } catch (e) {
+      if (!disposed && seq === settingsSeq) error = (e as Error).message;
+    } finally {
+      if (!disposed && seq === settingsSeq) {
+        saving = false;
+        scheduleActivation();
+      }
+    }
+  }
+
+  async function pollRecompute(jobId: string) {
+    pollTimer = null;
+    try {
+      const current = await api.getFaceRecomputeStatus(jobId);
+      if (disposed) return;
+      activeJob = current;
+      startingRecompute = false;
+      if (current.status === "running") {
+        pollTimer = setTimeout(() => pollRecompute(jobId), 1500);
+      } else {
+        await pollActivation();
       }
     } catch (e) {
-      error = (e as Error).message;
-    } finally {
-      saving = false;
+      if (!disposed) {
+        error = (e as Error).message;
+        pollTimer = setTimeout(() => pollRecompute(jobId), 1500);
+      }
     }
   }
 
   async function startRecompute() {
-    if (activeJob && activeJob.status === "running") return;
+    if (disposed || !activationReady() || startingRecompute || activeJob?.status === "running") return;
+    startingRecompute = true;
     error = null;
     try {
       const { job_id } = await api.startFaceRecompute();
-      activeJob = await api.getFaceRecomputeStatus(job_id);
-      pollTimer = setInterval(async () => {
-        try {
-          activeJob = await api.getFaceRecomputeStatus(job_id);
-          if (activeJob.status !== "running" && pollTimer) {
-            clearInterval(pollTimer);
-            pollTimer = null;
-            await refresh();
-          }
-        } catch (e) {
-          if (pollTimer) clearInterval(pollTimer);
-          pollTimer = null;
-          error = (e as Error).message;
-        }
-      }, 1500);
+      if (disposed) return;
+      activeJob = null;
+      await pollRecompute(job_id);
     } catch (e) {
-      error = (e as Error).message;
+      if (!disposed) error = (e as Error).message;
+    } finally {
+      if (!disposed) startingRecompute = pollTimer !== null && activeJob === null;
     }
   }
 
@@ -193,6 +262,7 @@
           <select
             id="fr-detector"
             bind:value={detectorKey}
+            disabled={saving || startingRecompute || activeJob?.status === "running"}
             class="block w-full rounded border border-baba-border bg-baba-bg px-3 py-2 text-m focus:outline-none focus:ring-1 focus:ring-baba-accent"
           >
             {#each detectors as d (d.key)}
@@ -223,6 +293,7 @@
           <select
             id="fr-embedder"
             bind:value={modelKey}
+            disabled={saving || startingRecompute || activeJob?.status === "running"}
             class="block w-full rounded border border-baba-border bg-baba-bg px-3 py-2 text-m focus:outline-none focus:ring-1 focus:ring-baba-accent"
           >
             {#each models as m (m.key)}
@@ -260,6 +331,7 @@
         max="1.20"
         step="0.01"
         bind:value={threshold}
+        disabled={saving || startingRecompute || activeJob?.status === "running"}
         class="w-full"
       />
       <p class="mt-2 text-s text-baba-text-faint">
@@ -272,18 +344,30 @@
       {#snippet actions()}
         {#if settings}<span class="text-s text-baba-text-faint">{t("fr_updated")} {dt.full(settings.updated_at)}</span>{/if}
       {/snippet}
-      <!-- These read `face_recognition_settings`, i.e. what is SAVED. The
-           pipeline picks a model up on its next restart, so calling them
-           "active" told the operator a model was running when the choice had
-           only been recorded. -->
+      {#if settings.activation_status === "pending"}
+        <Notice>{t("fr_activation_pending")}</Notice>
+      {:else if settings.activation_status === "error"}
+        <Notice tone="err">
+          <p>{t("fr_activation_error")}</p>
+          {#if settings.activation_error}<p>{settings.activation_error}</p>{/if}
+        </Notice>
+      {/if}
       <dl class="grid grid-cols-2 gap-x-6 gap-y-2 text-m md:grid-cols-3">
         <div>
-          <dt class="text-s text-baba-text-faint">{t("fr_active_detector")}</dt>
+          <dt class="text-s text-baba-text-faint">{t("fr_selected_detector")}</dt>
           <dd class="font-mono">{settings.detector_key}</dd>
         </div>
         <div>
-          <dt class="text-s text-baba-text-faint">{t("fr_active_embedder")}</dt>
+          <dt class="text-s text-baba-text-faint">{t("fr_selected_embedder")}</dt>
           <dd class="font-mono">{settings.model_key}</dd>
+        </div>
+        <div>
+          <dt class="text-s text-baba-text-faint">{t("fr_active_detector")}</dt>
+          <dd class="font-mono">{settings.active_detector_key}</dd>
+        </div>
+        <div>
+          <dt class="text-s text-baba-text-faint">{t("fr_active_embedder")}</dt>
+          <dd class="font-mono">{settings.active_model_key}</dd>
         </div>
         <div>
           <dt class="text-s text-baba-text-faint">{t("fr_reference_coverage")}</dt>
@@ -323,10 +407,10 @@
           {t("fr_byom_note")} <code class="rounded bg-baba-bg px-1">/models/</code>.
         </p>
         <div class="flex flex-wrap gap-2">
-          <Button onclick={startRecompute} disabled={activeJob !== null && activeJob.status === "running"} title={t("fr_action_force_recompute_title")}>
+          <Button onclick={startRecompute} disabled={!activationReady() || saving || startingRecompute || activeJob?.status === "running"} title={t("fr_action_force_recompute_title")}>
             {t("fr_action_force_recompute")}
           </Button>
-          <SaveButton dirty={hasUnsavedChanges()} {saving} onclick={save} />
+          <SaveButton dirty={hasUnsavedChanges() || settings.activation_status === "error"} {saving} blocked={startingRecompute || activeJob?.status === "running"} label={settings.activation_status === "error" && !hasUnsavedChanges() ? t("fr_retry_activation") : undefined} onclick={save} />
         </div>
       </div>
 

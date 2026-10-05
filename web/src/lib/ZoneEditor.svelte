@@ -2003,15 +2003,17 @@
       </Card>
 
       {#if rulesZone}
-        <ZoneRulesCard
-          zone={rulesZone}
-          onUpdate={(updated) => {
-            zones = zones.map((z) => (z.id === updated.id ? updated : z));
-            // Saved state caught up with the preview — drop the override.
-            rulesZonePreview = null;
-          }}
-          onPreview={(preview) => { rulesZonePreview = preview; }}
-        />
+        {#key rulesZone.id}
+          <ZoneRulesCard
+            zone={rulesZone}
+            onUpdate={(updated) => {
+              zones = zones.map((z) => (z.id === updated.id ? updated : z));
+              // Saved state caught up with the preview — drop the override.
+              rulesZonePreview = null;
+            }}
+            onPreview={(preview) => { rulesZonePreview = preview; }}
+          />
+        {/key}
       {/if}
 
       {#if tuneProposals.length > 0 || tuneError}

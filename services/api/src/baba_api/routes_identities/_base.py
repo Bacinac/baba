@@ -71,9 +71,9 @@ async def _recompute_label_aggregates(conn, global_id: UUID) -> None:
             -- models' spaces is a point in neither.
             AVG(face_embedding) FILTER (
                 WHERE face_embedding IS NOT NULL
-                  AND face_embedding_model = (SELECT model_key FROM face_recognition_settings)
+                  AND face_embedding_model = (SELECT active_model_key FROM face_recognition_settings)
             )::vector AS face_avg,
-            (SELECT model_key FROM face_recognition_settings) AS face_model,
+            (SELECT active_model_key FROM face_recognition_settings) AS face_model,
             COUNT(*) AS n
         FROM identity_reference_photos WHERE global_id = $1
         """,

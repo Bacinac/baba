@@ -557,6 +557,7 @@ async def _persist_reference_photos(
     pre_embeddings: list[np.ndarray] | None = None,
     pre_face_embeddings: list[np.ndarray] | None = None,
     pre_face_px: list[float | None] | None = None,
+    pre_face_model_key: str | None = None,
     face_only: bool = False,
     origin_refs: list[str | None] | None = None,
 ) -> dict[str, Any]:
@@ -607,6 +608,9 @@ async def _persist_reference_photos(
     state = request.app.state
     pool = state.pool
     face_stack = _enrolment_face_stack(state, face_only)
+    face_model_key = getattr(state, "face_model_key", None)
+    if pre_face_embeddings is not None and pre_face_model_key != face_model_key:
+        raise HTTPException(409, "face model changed during enrolment; retry the request")
     n = len(crops)
     c = _Candidates(
         crops=crops,
@@ -656,7 +660,7 @@ async def _persist_reference_photos(
     saved = await asyncio.to_thread(_write_reference_jpegs, state.config.media_path, c.crops)
     async with pool.acquire() as conn, conn.transaction():
         row = await _insert_reference_rows(
-            conn, global_id, user, source, c, saved, getattr(state, "face_model_key", None)
+            conn, global_id, user, source, c, saved, face_model_key
         )
 
     log.info(
@@ -1187,6 +1191,7 @@ async def reference_photos_from_face_samples(
         candidate_labels=labels,
         pre_face_embeddings=vecs,
         pre_face_px=pxs,
+        pre_face_model_key=face_model_key,
         face_only=True,
     )
 

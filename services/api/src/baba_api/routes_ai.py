@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from uuid import UUID
@@ -63,6 +64,7 @@ from baba_api.models import (
 log = logging.getLogger(__name__)
 
 ai_router = APIRouter()
+_SAM2_LOCK = threading.Lock()
 
 
 def _pool(request: Request):
@@ -347,6 +349,11 @@ def _get_sam2(request: Request):
     """Return a cached `Sam2Predictor` or None if SAM2 isn't configured /
     failed to load. The first call constructs and caches it on app.state;
     subsequent calls hit the cache."""
+    with _SAM2_LOCK:
+        return _load_sam2(request)
+
+
+def _load_sam2(request: Request):
     app = request.app
     if hasattr(app.state, "_sam2"):
         return app.state._sam2
@@ -391,6 +398,11 @@ def _refine_with_sam2_sync(
     Returns (refined_polygons, accepted_count, rejected_count). Each
     rejected polygon falls back to the original VLM coords so the user
     still sees a suggestion."""
+    with _SAM2_LOCK:
+        return _refine_polygons(predictor, snapshot_rgb, vlm_polygons)
+
+
+def _refine_polygons(predictor, snapshot_rgb, vlm_polygons):
     from baba_core.sam2 import mask_to_polygon
 
     predictor.set_image(snapshot_rgb)
@@ -647,6 +659,11 @@ def _segment_at_point_sync(
     snapshot_rgb: np.ndarray,
     payload: SegmentAtPointIn,
 ) -> list[list[float]] | None:
+    with _SAM2_LOCK:
+        return _segment_image(predictor, snapshot_rgb, payload)
+
+
+def _segment_image(predictor, snapshot_rgb, payload):
     from baba_core.sam2 import mask_to_polygon
 
     predictor.set_image(snapshot_rgb)

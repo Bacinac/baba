@@ -16,8 +16,10 @@ restart: cameras, tracks, events, identities, recordings and settings.
 - **The whole frame, every time.** Detection runs on full frames at a steady
   rate instead of behind a motion trigger, so a person standing still is not
   lost. A quiet scene lowers the frame rate; it never switches detection off.
-- **Identity by the whole body.** People are matched across cameras and days
-  by a body embedding. A visible face adds certainty but is never required.
+- **Names require face evidence.** Face embeddings identify people only within
+  the model space that produced them. Body embeddings group anonymous tracks
+  within bounded camera and time scopes, and can continue a recent face anchor
+  when configured; they do not independently assign a person's name.
 - **Independent stages.** Each service subscribes to what it needs, so a slow
   stage falls behind on its own without stalling the others.
 - **Hardware behind plug-in backends.** Inference and decoding are backends
@@ -34,9 +36,9 @@ restart: cameras, tracks, events, identities, recordings and settings.
 | `ingestor` | One decoder per enabled camera; writes frames to the shared-memory ring and adapts the frame rate to scene activity |
 | `detector` | Batched transformer detection (RT-DETRv2, D-FINE) on the GPU; very wide frames are split into overlapping tiles |
 | `tracker` | Per-camera tracking (Norfair with OSNet appearance); motion state (moving, stationary, parked) and the activity verdict the ingestor follows |
-| `embedder` | Body embeddings (DINOv2) and faces (YuNet, AuraFace) for tracked objects, sampled from the ring |
+| `embedder` | Body embeddings (OSNet) and faces (YuNet, AuraFace, or selected BYOM models) for tracked objects, sampled from the ring and native recordings |
 | `event-manager` | Turns track lifecycles into durable tracks and events, zone entries, exits and dwell; thumbnails |
-| `state-evaluator` | Scene states of fixed regions (a gate open, a garage door up), learnt from a few reference crops; license-plate reading when enabled |
+| `state-evaluator` | DINOv2 scene states of fixed regions (a gate open, a garage door up), learnt from reference crops; license-plate reading when enabled |
 | `recorder` | Continuous recording per camera without transcoding, in segments, with tiered retention |
 | `doorbell` | Button presses from supported doorbells, as events |
 | `hwstats` | CPU, memory and GPU gauges for the System page |

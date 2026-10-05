@@ -7,7 +7,6 @@
     type Zone,
     type ZoneClassRule,
     type ZoneRules,
-    type GlobalDetectionRule,
   } from "$lib/api";
   import { untrack } from "svelte";
   import { classLabel } from "$lib/classLabels";
@@ -35,17 +34,19 @@
   let error = $state<string | null>(null);
   let pickerOpen = $state(false);
   let pickerValue = $state("");
-  let globalClasses = $state<string[]>([]);
+  let effectiveClasses = $state<string[]>([]);
 
-  // Load the set of enabled global classes once — the picker offers
-  // only classes that the global allowlist already permits, since a
-  // zone rule for a globally-disabled class would never fire.
   $effect(() => {
-    api.listGlobalDetectionRules().then((rs) => {
-      globalClasses = rs
-        .filter((r: GlobalDetectionRule) => r.enabled)
-        .map((r) => r.class_name);
-    }).catch(() => {});
+    const cameraId = zoneProp.camera_id;
+    let cancelled = false;
+    effectiveClasses = [];
+    api.listCameraDetectionRulesEffective(cameraId).then((rs) => {
+      if (cancelled) return;
+      effectiveClasses = rs.filter((r) => r.enabled).map((r) => r.class_name);
+    }).catch((e) => {
+      if (!cancelled) error = (e as Error).message;
+    });
+    return () => { cancelled = true; };
   });
 
   // Local copy of the rules so the inputs stay snappy; flushed to the
@@ -55,23 +56,28 @@
     byLabel(Object.entries(enabledClasses), ([cls]) => classLabel(cls))
   );
   let pickable = $derived(
-    byLabel(globalClasses.filter((c) => !(c in enabledClasses)), classLabel),
+    byLabel(effectiveClasses.filter((c) => !(c in enabledClasses)), classLabel),
   );
 
   async function commitRules(next: ZoneRules) {
+    if (saving) return;
+    const targetId = zone.id;
     saving = true;
     error = null;
     try {
-      const updated = await api.patchZone(zone.id, { rules: next });
+      const updated = await api.patchZone(targetId, { rules: next });
+      if (zoneProp.id !== targetId) return;
+      zone = updated;
       onUpdate(updated);
     } catch (e) {
-      error = (e as Error).message;
+      if (zoneProp.id === targetId) error = (e as Error).message;
     } finally {
-      saving = false;
+      if (zoneProp.id === targetId) saving = false;
     }
   }
 
   async function setClassRule(cls: string, patch: Partial<ZoneClassRule>) {
+    if (saving) return;
     const current = enabledClasses[cls] ?? {};
     const merged = { ...current, ...patch };
     const nextRules: ZoneRules = {
@@ -81,13 +87,14 @@
   }
 
   async function removeClass(cls: string) {
+    if (saving) return;
     const next = { ...enabledClasses };
     delete next[cls];
     await commitRules({ enabled_classes: next });
   }
 
   async function addClass() {
-    if (!pickerValue) return;
+    if (!pickerValue || saving) return;
     const cls = pickerValue;
     pickerValue = "";
     pickerOpen = false;
@@ -142,6 +149,7 @@
           <div class="mb-2 flex items-center gap-2">
             <input
               type="range" min="0" max="1" step="0.05"
+              disabled={saving}
               value={rule.min_confidence ?? 0}
               oninput={(e) => {
                 const v = parseFloat((e.target as HTMLInputElement).value);
@@ -179,6 +187,7 @@
 
             <input
               type="number" min="0" step="100"
+              disabled={saving}
               value={nz(rule.min_dwell_ms)}
               placeholder="—"
               aria-label={t("detection_rules_zone_dwell_ms")}
@@ -199,6 +208,7 @@
             />
             <input
               type="number" min="0" step="1"
+              disabled={saving}
               value={nz(rule.cooldown_s)}
               placeholder="—"
               aria-label={t("detection_rules_zone_cooldown_s")}
@@ -210,6 +220,7 @@
             />
             <input
               type="number" min="0" max="100" step="0.5"
+              disabled={saving}
               value={rule.min_area_pct !== null && rule.min_area_pct !== undefined
                 ? String(Math.round(rule.min_area_pct * 1000) / 10) : ""}
               placeholder="—"
@@ -245,6 +256,7 @@
         <select
           class="rounded border border-baba-border bg-baba-bg px-2 py-1 text-s"
           bind:value={pickerValue}
+          disabled={saving}
         >
           <option value="">{t("detection_rules_pick_class")}</option>
           {#each pickable as cls (cls)}

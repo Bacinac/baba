@@ -99,6 +99,20 @@ async def list_cameras(request: Request, user: AuthUser = Depends(current_user))
     return [_camera_seen_by(r, user) for r in rows]
 
 
+@router.get("/cameras/stream-access/{stream}")
+async def camera_stream_access(
+    stream: str, request: Request, user: AuthUser = Depends(current_user)
+) -> dict[str, str]:
+    registered = await _pool(request).fetchval(
+        "SELECT EXISTS (SELECT 1 FROM cameras WHERE enabled AND "
+        "(slug = $1 OR (slug || '_sub' = $1 AND substream_url IS NOT NULL)))",
+        stream,
+    )
+    if not registered:
+        raise HTTPException(404, "camera stream not found")
+    return {"stream": stream, "role": user.role}
+
+
 @router.post("/cameras", response_model=Camera, status_code=201)
 async def create_camera(
     payload: CameraIn,

@@ -119,3 +119,10 @@ COCO_CLASSES: tuple[str, ...] = (
     "refrigerator", "book", "clock", "vase", "scissors", "teddy bear",
     "hair drier", "toothbrush",
 )
+
+
+def class_id_for_name(name: str | None) -> int | None:
+    try:
+        return COCO_CLASSES.index(name) if name else None
+    except ValueError:
+        return None

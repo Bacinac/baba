@@ -47,6 +47,7 @@
   });
 
   function pickFile(f: File | null) {
+    invalidateSearch();
     error = null;
     result = null;
     if (queryPreview) URL.revokeObjectURL(queryPreview);
@@ -69,6 +70,11 @@
   // so two searches can be in flight and the slower one can land last —
   // leaving results that belong to a filter the operator has already moved off.
   let searchSeq = 0;
+
+  function invalidateSearch() {
+    searchSeq++;
+    loading = false;
+  }
 
   async function runSearch() {
     if (!queryFile) return;
@@ -104,6 +110,7 @@
   }
 
   function clearAll() {
+    invalidateSearch();
     if (queryPreview) URL.revokeObjectURL(queryPreview);
     queryFile = null;
     queryPreview = "";
@@ -115,6 +122,7 @@
   // Revoke a lingering preview object-URL if the page is left with one set —
   // clearAll/re-select handle the in-page cases, this covers navigation away.
   onDestroy(() => {
+    invalidateSearch();
     if (queryPreview) URL.revokeObjectURL(queryPreview);
   });
 

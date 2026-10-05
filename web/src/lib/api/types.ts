@@ -739,6 +739,10 @@ export interface FaceDetector {
 export interface FaceRecognitionSettings {
   model_key: string;
   detector_key: string;
+  active_model_key: string;
+  active_detector_key: string;
+  activation_status: "active" | "pending" | "error";
+  activation_error: string | null;
   match_threshold: number;
   updated_at: string;
   updated_by_user: string | null;

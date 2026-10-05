@@ -15,6 +15,8 @@ from baba_core import (
     make_face_stack_for_model,
     setup_logging,
 )
+from baba_core.face_settings import acknowledge_face_selection, read_face_selection
+from baba_core.inference import run_inference
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.pg_listen import ResilientListener
 from fastapi import Depends, FastAPI
@@ -119,55 +121,42 @@ async def _load_face_stack(app: FastAPI, pool) -> None:
     someone restarted it. Now it reloads on `face_recognition_changed`, the
     same signal the event-manager takes its threshold from.
     """
+    if not hasattr(app.state, "face_reload_lock"):
+        app.state.face_reload_lock = asyncio.Lock()
+    async with app.state.face_reload_lock:
+        await _activate_api_face_stack(app, pool)
+
+
+async def _activate_api_face_stack(app: FastAPI, pool) -> None:
+    selection = await read_face_selection(pool)
+    pair = (selection.detector_key, selection.model_key)
     fd = os.environ.get("BABA_FACE_DETECTOR_MODEL", "").strip()
     if not fd:
         app.state.face_stack = None
         app.state.face_stack_error = None
+        await acknowledge_face_selection(pool, "api", selection, "Face detector is not configured")
         return
-    model_key = os.environ.get("BABA_FACE_RECOGNITION_MODEL", "auraface").strip() or "auraface"
-    detector_key = os.environ.get("BABA_FACE_DETECTOR", "yunet").strip() or "yunet"
     try:
-        row = await pool.fetchrow(
-            "SELECT model_key, detector_key FROM face_recognition_settings WHERE id = 1"
-        )
-        if row is not None:
-            model_key = row["model_key"] or model_key
-            detector_key = row["detector_key"] or detector_key
-    except Exception:
-        log.exception("face settings DB read failed; using env/default face model")
-    # face_stack_error discriminates the two None cases downstream:
-    #   None + error set  → models present but their init FAILED (broken
-    #                       model or accelerator) → enrollment must fail loud,
-    #                       never silently store face-less references.
-    #   None + no error   → face models simply absent → legitimate
-    #                       body-only enrollment mode.
-    app.state.face_stack_error = None
-    try:
-        stack, _det, _mdl = make_face_stack_for_model(
-            yunet_path=Path(fd),
-            models_dir=Path("/models"),
-            model_key=model_key,
-            detector_key=detector_key,
-        )
-    except Exception as e:
-        # make_face_stack_for_model raises when the models exist but a session
-        # couldn't initialise on this build's accelerator. Keep the API
-        # (auth/live/events don't need the GPU) up, but record the failure so
-        # enrollment endpoints reject instead of degrading silently. The OLD
-        # stack is dropped on purpose: continuing to enrol into a space the
-        # operator has moved away from is the silent-wrong-answer case.
-        log.exception("api face stack init FAILED — face enrollment will reject until fixed")
+        if getattr(app.state, "face_loaded_pair", None) != pair:
+            stack, detector, model = await run_inference(
+                make_face_stack_for_model, yunet_path=Path(fd), models_dir=Path("/models"),
+                model_key=selection.model_key, detector_key=selection.detector_key,
+            )
+            if stack is None or (detector, model) != pair:
+                raise RuntimeError("selected face models could not be loaded")
+            app.state.face_stack = stack
+            app.state.face_model_key = model
+            app.state.face_loaded_pair = pair
+        app.state.face_stack_error = None
+    except Exception as exc:
+        log.exception("api face activation failed")
         app.state.face_stack = None
-        app.state.face_stack_error = str(e) or "face model initialisation failed"
         app.state.face_model_key = None
+        app.state.face_loaded_pair = None
+        app.state.face_stack_error = str(exc)
+        await acknowledge_face_selection(pool, "api", selection, str(exc))
         return
-    app.state.face_stack = stack
-    # Enrollment from stored face vectors has to know which embedder space
-    # those vectors are in — `track_embedding_samples.face_embedding_model`
-    # must match this, or we would enrol vectors from a model the matcher
-    # no longer runs.
-    app.state.face_model_key = _mdl
-    log.info("api face stack: detector=%s embedder=%s", _det, _mdl)
+    await acknowledge_face_selection(pool, "api", selection)
 
 
 async def _start_face_stack(app: FastAPI, config: ApiConfig, pool) -> ResilientListener:
@@ -177,10 +166,6 @@ async def _start_face_stack(app: FastAPI, config: ApiConfig, pool) -> ResilientL
     # of the api keeps working.
     _init_embedder_backend(app, config)
 
-    await _load_face_stack(app, pool)
-    if app.state.face_stack is None and app.state.face_stack_error is None:
-        log.warning("api face stack disabled (face models absent) — body-only enrollment")
-
     def _on_face_settings_changed(_channel: str, _payload: str) -> None:
         spawn(_load_face_stack(app, pool), name="api-face-stack-reload", log=log)
 
@@ -188,6 +173,7 @@ async def _start_face_stack(app: FastAPI, config: ApiConfig, pool) -> ResilientL
         config.dsn,
         ["face_recognition_changed"],
         on_notify=_on_face_settings_changed,
+        on_connect=lambda: _load_face_stack(app, pool),
         name="api-face-settings",
     )
     await listener.start()

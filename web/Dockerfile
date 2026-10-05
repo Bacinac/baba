@@ -34,6 +34,6 @@ COPY --from=build /app/build ./build
 # "type": "module" — adapter-node's build/ is ESM; without a package.json
 # next to it Node would parse handler.js as CommonJS and refuse the imports.
 COPY web/package.json ./
-COPY web/server.mjs web/client-ip.mjs ./
+COPY web/server.mjs web/client-ip.mjs web/proxy.mjs ./
 EXPOSE 5173
 CMD ["node", "server.mjs"]

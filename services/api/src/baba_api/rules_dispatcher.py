@@ -33,12 +33,15 @@ from datetime import UTC, datetime
 from typing import Any
 
 import asyncpg
+from baba_core.classes import class_id_for_name
 from baba_core.pg_listen import ResilientListener
 from home_core.rate_limit import TokenBucketLimiter
 from home_core.tasks import spawn
+from pydantic import ValidationError
 
 from baba_api.crypto import decrypt_secret
 from baba_api.notifications import NotificationError, dispatch
+from baba_api.routes_rules import RuleFilter
 
 log = logging.getLogger(__name__)
 
@@ -120,7 +123,7 @@ async def _fetch_event(pool: asyncpg.Pool, event_id: str) -> dict[str, Any] | No
     notification body."""
     row = await pool.fetchrow(
         """
-        SELECT e.id, e.kind, e.at, e.camera_id,
+        SELECT e.id, e.kind, e.at, e.camera_id, e.payload,
                c.name AS camera_name,
                t.class_id AS track_class_id,
                t.class_name AS track_class_name
@@ -133,7 +136,29 @@ async def _fetch_event(pool: asyncpg.Pool, event_id: str) -> dict[str, Any] | No
     )
     if row is None:
         return None
-    return dict(row)
+    event = dict(row)
+    payload = event.pop("payload")
+    if isinstance(payload, str):
+        payload = json.loads(payload)
+    if event["track_class_name"] is None:
+        event["track_class_name"] = payload.get("class_name")
+    if event["track_class_id"] is None:
+        event["track_class_id"] = class_id_for_name(event["track_class_name"])
+    return event
+
+
+async def _validated_filter(pool, rule):
+    try:
+        raw = rule["filter"]
+        raw = json.loads(raw) if isinstance(raw, str) else raw
+        return RuleFilter.model_validate(raw or {}).model_dump(mode="json")
+    except (ValidationError, ValueError, TypeError) as exc:
+        log.exception("notification rule %s has an invalid filter", rule["id"])
+        await pool.execute(
+            "UPDATE notification_rules SET last_error = $2 WHERE id = $1",
+            rule["id"], f"Invalid filter: {exc}",
+        )
+        return None
 
 
 async def _dispatch_event(
@@ -156,11 +181,9 @@ async def _dispatch_event(
         return
 
     for rule in rules:
-        raw_filter = rule["filter"]
-        if isinstance(raw_filter, str):
-            flt = json.loads(raw_filter)
-        else:
-            flt = dict(raw_filter) if raw_filter is not None else {}
+        flt = await _validated_filter(pool, rule)
+        if flt is None:
+            continue
         if not _matches_filter(flt, event):
             continue
 

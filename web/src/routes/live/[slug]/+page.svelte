@@ -220,6 +220,7 @@
     loadError = null;
     lastMessage = null;
     lastTracksMsg = null;
+    zones = [];
     measuredFps = null;
     fpsArrivals = [];
     let cancelled = false;
@@ -247,14 +248,18 @@
         if (!cancelled) loadError = (e as Error).message;
         return;
       }
+      if (cancelled) return;
       localEs = detectionsFeed(s, {
         message: (m) => {
+          if (cancelled) return;
           lastMessage = m;
           noteArrival();
         },
       });
       es = localEs;
-      localEsTracks = tracksFeed(s, { message: (m) => (lastTracksMsg = m) });
+      localEsTracks = tracksFeed(s, {
+        message: (m) => { if (!cancelled) lastTracksMsg = m; },
+      });
       esTracks = localEsTracks;
     })();
     return () => {

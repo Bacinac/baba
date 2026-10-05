@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import re
 import shutil
@@ -665,15 +666,20 @@ async def get_camera_clip(
     (never less). Only HEVC cameras (e.g. west, which webviews can't decode) are
     re-encoded to H.264 — NVENC first, libx264 fallback, downscaled to keep the
     encode quick."""
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise HTTPException(400, "window timestamps must be finite")
     if end - start < _CLIP_MIN_S:
         raise HTTPException(
             400, f"window must span at least {_CLIP_MIN_S}s (got {end - start:.3f}s)"
         )
     pool = request.app.state.pool
 
-    # First pass with a generous bound to learn the codec, then re-clamp.
-    start_dt = datetime.fromtimestamp(start, tz=UTC)
-    end_dt = datetime.fromtimestamp(end, tz=UTC)
+    end = min(end, start + _CLIP_MAX_COPY_S)
+    try:
+        start_dt = datetime.fromtimestamp(start, tz=UTC)
+        end_dt = datetime.fromtimestamp(end, tz=UTC)
+    except (OverflowError, OSError, ValueError) as e:
+        raise HTTPException(400, "window timestamps are outside the supported range") from e
     rows = await pool.fetch(
         f"""
         SELECT path, started_at, ended_at, codec
@@ -692,8 +698,12 @@ async def get_camera_clip(
 
     # Re-encode only when a segment is NOT confirmed H.264 (HEVC, or unknown →
     # play it safe and produce something the browser can decode).
+    encoded_end = datetime.fromtimestamp(min(end, start + _CLIP_MAX_ENC_S), tz=UTC)
     reencode = any((r["codec"] or "").lower() not in _H264_CODECS for r in rows)
-    end = min(end, start + (_CLIP_MAX_ENC_S if reencode else _CLIP_MAX_COPY_S))
+    if reencode:
+        end = encoded_end.timestamp()
+        rows = [r for r in rows if r["started_at"] < encoded_end]
+    reencode = any((r["codec"] or "").lower() not in _H264_CODECS for r in rows)
 
     media_root = await asyncio.to_thread(Path(request.app.state.config.media_path).resolve)
     pairs: list[tuple[dict, Path]] = []

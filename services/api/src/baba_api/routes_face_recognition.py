@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
+from typing import Literal
 from uuid import UUID
 
 import asyncpg
@@ -89,6 +90,10 @@ class FaceRecognitionSettingsOut(BaseModel):
     model_key: str
     detector_key: str
     match_threshold: float
+    active_model_key: str
+    active_detector_key: str
+    activation_status: Literal["active", "pending", "error"]
+    activation_error: str | None
     updated_at: str
     updated_by_user: str | None
     # Convenience for UI: reference photos tagged with this model
@@ -188,7 +193,7 @@ async def list_face_models() -> list[FaceModelOut]:
 async def _load_settings(pool: asyncpg.Pool) -> FaceRecognitionSettingsOut:
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT s.model_key, s.detector_key, s.match_threshold, s.updated_at, "
+            "SELECT s.*, "
             "       u.username AS updated_by_user "
             "FROM face_recognition_settings s "
             "LEFT JOIN users u ON u.id = s.updated_by "
@@ -212,12 +217,17 @@ async def _load_settings(pool: asyncpg.Pool) -> FaceRecognitionSettingsOut:
                    ) AS stale
             FROM identity_reference_photos
             """,
-            row["model_key"],
+            row["active_model_key"],
         )
     return FaceRecognitionSettingsOut(
         model_key=row["model_key"],
         detector_key=row["detector_key"],
         match_threshold=float(row["match_threshold"]),
+        active_model_key=row["active_model_key"],
+        active_detector_key=row["active_detector_key"],
+        activation_status=("error" if row["api_error"] or row["embedder_error"] else
+                           "active" if row["active_revision"] == row["revision"] else "pending"),
+        activation_error=row["api_error"] or row["embedder_error"],
         updated_at=row["updated_at"].isoformat(),
         updated_by_user=row["updated_by_user"],
         references_in_active_model=int(counts["active"] or 0),
@@ -275,17 +285,14 @@ async def put_face_recognition_settings(
         await conn.execute(
             "UPDATE face_recognition_settings "
             "SET model_key = $1, detector_key = $2, match_threshold = $3, "
-            "    updated_at = now(), updated_by = $4 WHERE id = 1",
+            "    updated_at = now(), updated_by = $4, revision = revision + 1, "
+            "    api_revision = NULL, embedder_revision = NULL, "
+            "    api_error = NULL, embedder_error = NULL WHERE id = 1",
             body.model_key,
             body.detector_key,
             body.match_threshold,
             user.id,
         )
-        # Tell the pipeline. Without this the row changed, the UI showed the
-        # new value, and the event-manager kept matching on the threshold it
-        # read at boot — a setting that appeared applied and was not. Every
-        # other operator-editable table already NOTIFYs; this one never did.
-        await conn.execute("SELECT pg_notify('face_recognition_changed', '1')")
 
     await write_audit(
         pool,
@@ -318,12 +325,16 @@ async def start_recompute(
     pool: asyncpg.Pool = request.app.state.pool
     async with pool.acquire() as conn:
         settings = await conn.fetchrow(
-            "SELECT model_key, detector_key FROM face_recognition_settings WHERE id = 1"
+            "SELECT active_model_key, active_detector_key, revision, active_revision, api_error, embedder_error "
+            "FROM face_recognition_settings WHERE id = 1"
         )
         if settings is None:
             raise HTTPException(500, "face_recognition_settings singleton missing")
-        active_model = settings["model_key"]
-        active_detector = settings["detector_key"]
+        if (settings["revision"] != settings["active_revision"]
+                or settings["api_error"] or settings["embedder_error"]):
+            raise HTTPException(409, "face model activation is not complete")
+        active_model = settings["active_model_key"]
+        active_detector = settings["active_detector_key"]
         try:
             row = await conn.fetchrow(
                 "INSERT INTO face_recompute_jobs (model_key, started_by) "

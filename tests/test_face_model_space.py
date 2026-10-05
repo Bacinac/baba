@@ -26,7 +26,9 @@ def test_the_centroid_averages_only_the_active_models_faces(pg):
     async def main():
         conn = await asyncpg.connect(pg)
         try:
-            await conn.execute("UPDATE face_recognition_settings SET model_key = 'active' WHERE id = 1")
+            await conn.execute(
+                "UPDATE face_recognition_settings SET active_model_key = 'active', model_key = 'pending' WHERE id = 1"
+            )
 
             async def identity(*photos) -> object:
                 gid = uuid4()

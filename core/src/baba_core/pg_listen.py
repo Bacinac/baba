@@ -68,9 +68,13 @@ class ResilientListener:
         unreachable at boot fails loud, same as the old code), then spawn the
         supervisor that keeps the connection alive across drops."""
         self._stopping = False
-        await self._connect()
-        if self._on_connect is not None:
-            await self._on_connect()
+        try:
+            await self._connect()
+            if self._on_connect is not None:
+                await self._on_connect()
+        except BaseException:
+            await self._close_conn()
+            raise
         self._task = spawn(self._supervise(), name=self._name, log=log)
 
     async def stop(self) -> None:
@@ -125,8 +129,10 @@ class ResilientListener:
                     await self._on_connect()
                 return
             except asyncio.CancelledError:
+                await self._close_conn()
                 raise
             except Exception as e:
+                await self._close_conn()
                 log.warning(
                     "[%s] reconnect failed: %s; retry in %.1fs", self._name, e, backoff, exc_info=True
                 )

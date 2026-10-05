@@ -34,6 +34,7 @@ from typing import Any
 import cv2
 import numpy as np
 from baba_core.face import FRONTALITY_MAX, align_face, frontality_residual, set_canonical_face
+from baba_core.inference import run_inference
 from baba_core.paths import FACE_CROPS, MediaLayout
 from baba_core.recordings import covers_until_sql
 
@@ -113,12 +114,14 @@ class NativeFaceReader:
     """Re-reads under-sized faces from the recordings that hold them."""
 
     def __init__(self, pool: Any, media_root: Path, face_stack: Any,
-                 face_model_key: str, face_crops_dir: Path) -> None:
+                 face_model_key: str, face_crops_dir: Path,
+                 lock: asyncio.Lock | None = None) -> None:
         self._pool = pool
         self._media_root = media_root
         self._face = face_stack
         self._model_key = face_model_key
         self._crops_dir = face_crops_dir
+        self._lock = lock or asyncio.Lock()
 
     async def _pending(self) -> list[Any]:
         """Person tracks that had a face and could not use it.
@@ -229,7 +232,7 @@ class NativeFaceReader:
         if not samples:
             why.append(_NO_SEGMENT)
         for s in samples:
-            got = await asyncio.to_thread(
+            got = await run_inference(
                 self._read_face,
                 self._media_root / s["path"], s["started_at"], s["captured_at"],
                 s["bbox"], track["downscale_max_edge"],
@@ -298,7 +301,8 @@ class NativeFaceReader:
     async def run(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
-                await self._tick()
+                async with self._lock:
+                    await self._tick()
             except Exception:
                 log.exception("native face pass failed — continuing")
             with contextlib.suppress(TimeoutError):

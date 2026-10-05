@@ -185,6 +185,7 @@ def test_a_face_only_import_keeps_faces_and_stores_no_body(pg, tmp_path):
             "opus",
             pre_face_embeddings=[unit(20), unit(21), None, unit(23), unit(20)],
             pre_face_px=[80.0, 30.0, None, 90.0, 85.0],
+            pre_face_model_key="m1",
             face_only=True,
             origin_refs=["face:1", "face:2", "face:3", "face:4", "face:5"],
         )

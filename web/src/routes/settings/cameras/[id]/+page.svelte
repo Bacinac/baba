@@ -2,7 +2,7 @@
   import { goto } from "$app/navigation";
   import { dialog, Button, Tabs, Card, Tag, SaveButton } from "$lib/kit";
   import { page } from "$app/state";
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api, type Camera, type CameraPatch, type TrackingDefaults } from "$lib/api";
   import { t, type MessageKey } from "$lib/i18n";
   import StreamUrlField from "$lib/StreamUrlField.svelte";
@@ -59,14 +59,39 @@
   let renameDraft = $state("");
   let renameSaving = $state(false);
   let renameError = $state<string | null>(null);
+  let stillnessSaving = $state(false);
+  let disposed = false;
+  let cameraBusy = $derived(saving || renameSaving || stillnessSaving);
+
+  function mutationTarget() {
+    if (disposed || loading || !cam || cam.id !== id || cameraBusy) return null;
+    const targetId = cam.id;
+    const seq = loadSeq;
+    return {
+      id: targetId,
+      current: () => !disposed && id === targetId && seq === loadSeq,
+    };
+  }
 
   async function load() {
     const myseq = ++loadSeq;
+    const targetId = id;
     loading = true;
     loadError = null;
+    cam = null;
+    saving = false;
+    renameSaving = false;
+    stillnessSaving = false;
+    savedAt = null;
+    saveError = null;
+    renaming = false;
+    renameDraft = "";
+    renameError = null;
+    trackingDrag = {};
+    maintainDrag = null;
     try {
-      const c = await api.getCamera(id);
-      if (myseq !== loadSeq) return; // superseded by a newer id
+      const c = await api.getCamera(targetId);
+      if (disposed || myseq !== loadSeq || id !== targetId) return;
       cam = c;
       edit = {
         name: c.name,
@@ -81,9 +106,9 @@
         color: c.color,
       };
     } catch (e) {
-      if (myseq === loadSeq) loadError = (e as Error).message;
+      if (!disposed && myseq === loadSeq && id === targetId) loadError = (e as Error).message;
     } finally {
-      if (myseq === loadSeq) loading = false;
+      if (!disposed && myseq === loadSeq && id === targetId) loading = false;
     }
   }
 
@@ -93,7 +118,8 @@
     // <form> SSR warning.  An optional event allows callers from both
     // an Enter-keypress in the input and a button click.
     e?.preventDefault();
-    if (!cam) return;
+    const target = mutationTarget();
+    if (!target || !cam) return;
     const next = renameDraft.trim();
     if (!next || next === cam.slug) {
       renaming = false;
@@ -102,48 +128,56 @@
     renameSaving = true;
     renameError = null;
     try {
-      cam = await api.renameCameraSlug(cam.id, next);
+      const updated = await api.renameCameraSlug(target.id, next);
+      if (!target.current()) return;
+      cam = updated;
       renaming = false;
       renameDraft = "";
     } catch (err) {
-      renameError = (err as Error).message;
+      if (target.current()) renameError = (err as Error).message;
     } finally {
-      renameSaving = false;
+      if (target.current()) renameSaving = false;
     }
   }
 
   async function save(e: SubmitEvent) {
     e.preventDefault();
-    if (!cam) return;
+    const target = mutationTarget();
+    if (!target) return;
     saving = true;
     saveError = null;
     try {
-      cam = await api.patchCamera(cam.id, edit);
+      const updated = await api.patchCamera(target.id, { ...edit });
+      if (!target.current()) return;
+      cam = updated;
       savedAt = Date.now();
       // Clear "saved" flag after a moment.
       setTimeout(() => {
-        if (savedAt !== null && Date.now() - savedAt >= 1900) savedAt = null;
+        if (target.current() && savedAt !== null && Date.now() - savedAt >= 1900) savedAt = null;
       }, 2000);
     } catch (err) {
-      saveError = (err as Error).message;
+      if (target.current()) saveError = (err as Error).message;
     } finally {
-      saving = false;
+      if (target.current()) saving = false;
     }
   }
 
   async function remove() {
-    if (!cam) return;
+    const target = mutationTarget();
+    if (!target || !cam) return;
     const ok = await dialog.confirm({
       title: t("camera_delete"),
       message: `${t("cameras_confirm_delete")} "${cam.name}"?`,
       confirmLabel: t("dialog_delete"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || !target.current()) return;
     try {
-      await api.deleteCamera(cam.id);
+      await api.deleteCamera(target.id);
+      if (!target.current()) return;
       goto("/settings/cameras", { replaceState: true });
     } catch (err) {
+      if (!target.current()) return;
       await dialog.alert({
         title: t("dialog_error_title"),
         message: `${t("cameras_error_prefix")}: ${(err as Error).message}`,
@@ -202,20 +236,23 @@
   ];
   let trackingGlobals = $state<TrackingDefaults | null>(null);
   let trackingDrag = $state<Partial<Record<TrackingField, number>>>({});
-  let stillnessSaving = $state(false);
   // Maintain floor is per-camera and NOT layered (no inherit-global) — always
   // a concrete value, stamped into the current light-band profile on release.
   let maintainDrag = $state<number | null>(null);
   async function saveMaintain(v: number) {
-    if (!cam) return;
+    const target = mutationTarget();
+    if (!target) return;
     stillnessSaving = true;
     try {
-      cam = await api.patchCamera(cam.id, { maintain_conf: v });
+      const updated = await api.patchCamera(target.id, { maintain_conf: v });
+      if (target.current()) cam = updated;
     } catch (e) {
-      saveError = (e as Error).message;
+      if (target.current()) saveError = (e as Error).message;
     } finally {
-      stillnessSaving = false;
-      maintainDrag = null;
+      if (target.current()) {
+        stillnessSaving = false;
+        maintainDrag = null;
+      }
     }
   }
   onMount(async () => {
@@ -234,15 +271,19 @@
     );
   }
   async function saveTracking(patch: Partial<Record<TrackingField, number | null>>) {
-    if (!cam) return;
+    const target = mutationTarget();
+    if (!target) return;
     stillnessSaving = true;
     try {
-      cam = await api.patchCamera(cam.id, patch);
+      const updated = await api.patchCamera(target.id, patch);
+      if (target.current()) cam = updated;
     } catch (e) {
-      saveError = (e as Error).message;
+      if (target.current()) saveError = (e as Error).message;
     } finally {
-      stillnessSaving = false;
-      trackingDrag = {};
+      if (target.current()) {
+        stillnessSaving = false;
+        trackingDrag = {};
+      }
     }
   }
 
@@ -251,6 +292,7 @@
   // double-fetch. Monotonic guard so a rapid id change settles newest-wins.
   let loadSeq = 0;
   $effect(() => { void id; void load(); });
+  onDestroy(() => { disposed = true; loadSeq++; });
 </script>
 
 <div class="mb-4">
@@ -352,7 +394,7 @@
         {#if !renaming}
           <div class="mt-1 flex items-center gap-2">
             <code class="rounded border border-baba-border bg-baba-panel-2 px-2 py-1 text-m">{cam.slug}</code>
-            <Button size="small" onclick={() => {
+            <Button size="small" disabled={cameraBusy} onclick={() => {
                 if (!cam) return;
                 renameDraft = cam.slug;
                 renameError = null;
@@ -382,14 +424,14 @@
                 pattern="^[a-z0-9][a-z0-9_-]*$"
                 autocomplete="off"
                 spellcheck="false"
-                disabled={renameSaving}
+                disabled={cameraBusy}
                 onkeydown={(e) => {
                   if (e.key === "Enter") { e.preventDefault(); renameSlug(); }
                 }}
                 class="flex-1 rounded border border-baba-border bg-baba-panel-2 px-2 py-1 text-m font-mono"
                 placeholder={cam.slug}
               />
-              <SaveButton size="small" dirty={!!renameDraft.trim() && renameDraft.trim() !== cam.slug} saving={renameSaving} label={t("camera_slug_rename_confirm")} onclick={() => renameSlug()} />
+              <SaveButton size="small" dirty={!!renameDraft.trim() && renameDraft.trim() !== cam.slug} saving={renameSaving} blocked={saving || stillnessSaving} label={t("camera_slug_rename_confirm")} onclick={() => renameSlug()} />
               <Button size="small" onclick={() => { renaming = false; renameError = null; }} disabled={renameSaving}>{t("discover_cancel")}</Button>
             </div>
             <p class="mt-2 text-xs text-baba-text-faint">{t("camera_slug_pattern_hint")}</p>
@@ -473,7 +515,7 @@
     {/if}
 
     <div class="flex items-center gap-3">
-      <SaveButton type="submit" {dirty} {saving} />
+      <SaveButton type="submit" {dirty} {saving} blocked={renameSaving || stillnessSaving} />
       {#if savedAt}
         <span class="text-s text-emerald-400">✓ {t("camera_saved")}</span>
       {/if}
@@ -488,7 +530,7 @@
     <p class="mt-1 text-s text-baba-text-faint">
       {t("camera_danger_cascade")}
     </p>
-    <div class="mt-3"><Button tone="danger" onclick={remove}>{t("camera_delete")}</Button></div>
+    <div class="mt-3"><Button tone="danger" onclick={remove} disabled={cameraBusy}>{t("camera_delete")}</Button></div>
   </section>
   {/if}
 
@@ -523,7 +565,7 @@
                     <Tag tone="busy">
                       {t("tracking_override_camera")}
                     </Tag>
-                    <Button size="small" onclick={() => saveTracking({ [r.key]: null })} disabled={stillnessSaving}
+                    <Button size="small" onclick={() => saveTracking({ [r.key]: null })} disabled={cameraBusy}
                       title={t("tracking_revert_to_global")} label={t("tracking_revert_to_global")}>↺</Button>
                   {:else}
                     <Tag tone="quiet">
@@ -535,7 +577,7 @@
                   <input
                     type="range" min={r.min} max={r.max} step={r.step}
                     value={trackingEffective(r.key)}
-                    disabled={stillnessSaving}
+                    disabled={cameraBusy}
                     oninput={(e) => (trackingDrag = { ...trackingDrag, [r.key]: r.parse((e.target as HTMLInputElement).value) })}
                     onchange={(e) => saveTracking({ [r.key]: r.parse((e.target as HTMLInputElement).value) })}
                     class="w-full accent-sky-500"
@@ -558,7 +600,7 @@
                 <input
                   type="range" min={0.05} max={0.55} step={0.01}
                   value={maintainDrag ?? cam.maintain_conf}
-                  disabled={stillnessSaving}
+                  disabled={cameraBusy}
                   oninput={(e) => (maintainDrag = parseFloat((e.target as HTMLInputElement).value))}
                   onchange={(e) => saveMaintain(parseFloat((e.target as HTMLInputElement).value))}
                   class="w-full accent-sky-500"

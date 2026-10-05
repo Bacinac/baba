@@ -711,10 +711,10 @@ class StateEvaluator:
                 rt.pending_count = 1
             if rt.pending_count >= region.hysteresis_n and raw_label != rt.current_state:
                 from_state = rt.current_state
-                rt.current_state = raw_label
                 await self._commit_transition(
                     region, from_state, raw_label, best_dist
                 )
+                rt.current_state = raw_label
 
     async def _frame_from_recording(self, region: RegionConfig, at: datetime) -> RingFrame:
         """The frame this camera saw at `at`, decoded out of its recorded

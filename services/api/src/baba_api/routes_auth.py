@@ -329,11 +329,12 @@ async def _consume_recovery_code(pool, user_id, raw_code: str) -> bool:
         )
         for r in rows:
             if await verify_password(candidate, r["code_hash"]):
-                await conn.execute(
-                    "UPDATE user_recovery_codes SET used_at = now() WHERE id = $1",
+                consumed = await conn.fetchval(
+                    "UPDATE user_recovery_codes SET used_at = now() "
+                    "WHERE id = $1 AND used_at IS NULL RETURNING id",
                     r["id"],
                 )
-                return True
+                return consumed is not None
     return False
 
 

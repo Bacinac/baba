@@ -61,8 +61,8 @@ def _unlink_row_media(media_root: Path, row_paths: dict) -> list:
     gone counts as done); a row with any real unlink failure is left out so
     its row survives to be retried, never orphaning the file behind a deleted
     row. Blocking stat/unlink on the slow HDD media tier — hundreds of syscalls
-    per batch — so this runs off the event loop, and outside any transaction so
-    no row lock is held across the I/O."""
+    per batch — so this runs off the event loop. The caller owns each row
+    until its files and metadata have been removed."""
     deletable = []
     for rid, paths in row_paths.items():
         ok = True
@@ -86,7 +86,12 @@ async def _prune_one_batch(
     """One batch: read N expired rows, unlink their media off the event loop,
     then delete only the rows whose files are actually gone. Returns the number
     of rows deleted so the outer loop knows whether to keep draining."""
-    rows = await pool.fetch(
+    async with pool.acquire() as conn, conn.transaction():
+        return await _prune_locked_tracks(conn, media_root, batch_size)
+
+
+async def _prune_locked_tracks(conn, media_root: Path, batch_size: int) -> int:
+    rows = await conn.fetch(
         """
         SELECT t.id, t.crop_path, t.thumbnail_path, t.face_crop_path,
                (SELECT array_agg(s.crop_path) FROM track_embedding_samples s
@@ -98,6 +103,7 @@ async def _prune_one_batch(
           AND t.retain_until < now()
         ORDER BY t.retain_until ASC
         LIMIT $1
+        FOR UPDATE OF t SKIP LOCKED
         """,
         batch_size,
     )
@@ -122,7 +128,7 @@ async def _prune_one_batch(
     deletable = await asyncio.to_thread(_unlink_row_media, media_root, row_paths)
     if not deletable:
         return 0
-    await pool.execute(
+    await conn.execute(
         "DELETE FROM tracks_all WHERE id = ANY($1::uuid[])",
         deletable,
     )
@@ -150,7 +156,12 @@ async def _prune_closed(pool: asyncpg.Pool, table: str, ended: str, batch_size: 
 async def _prune_plate_reads(pool: asyncpg.Pool, media_root: Path, batch_size: int) -> int:
     """One batch of expired plate reads: crop off disk first, then only the rows
     whose crop is gone."""
-    rows = await pool.fetch(
+    async with pool.acquire() as conn, conn.transaction():
+        return await _prune_locked_plate_reads(conn, media_root, batch_size)
+
+
+async def _prune_locked_plate_reads(conn, media_root: Path, batch_size: int) -> int:
+    rows = await conn.fetch(
         f"""
         SELECT r.id, r.crop_path FROM plate_reads r
         WHERE r.read_at < now() - $2::interval
@@ -159,6 +170,7 @@ async def _prune_plate_reads(pool: asyncpg.Pool, media_root: Path, batch_size: i
           AND NOT EXISTS (SELECT 1 FROM place_occupancy o WHERE o.plate_read_id = r.id)
         ORDER BY r.read_at
         LIMIT $1
+        FOR UPDATE OF r SKIP LOCKED
         """,  # noqa: S608
         batch_size, ANONYMOUS,
     )
@@ -167,7 +179,7 @@ async def _prune_plate_reads(pool: asyncpg.Pool, media_root: Path, batch_size: i
     row_paths = {r["id"]: [r["crop_path"]] if r["crop_path"] else [] for r in rows}
     deletable = await asyncio.to_thread(_unlink_row_media, media_root, row_paths)
     if deletable:
-        await pool.execute("DELETE FROM plate_reads WHERE id = ANY($1::uuid[])", deletable)
+        await conn.execute("DELETE FROM plate_reads WHERE id = ANY($1::uuid[])", deletable)
     return len(deletable)
 
 

@@ -302,7 +302,7 @@ def test_zone_exits_close_only_the_zones_that_were_entered(pg, tmp_path):
         assert at.timestamp() == near(r.last_seen_ns / S)
         assert payload == {
             "zone_id": str(drive), "zone_name": "drive", "zone_kind": "generic",
-            "bbox": [100.0, 100.0, 200.0, 300.0], "class_name": None, "track_id": "1",
+            "bbox": [100.0, 100.0, 200.0, 300.0], "class_name": "person", "class_id": 0, "track_id": "1",
         }
         assert (r.inside_zones, r.enter_emitted, r.dwell_emitted) == ({}, set(), set())
 

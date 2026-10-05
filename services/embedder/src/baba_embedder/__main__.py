@@ -36,10 +36,13 @@ from baba_core import (
     cap_long_edge,
     drain_quietly,
     dsn_from_env,
+    make_face_stack_for_model,
     setup_logging,
     vector_literal,
 )
 from baba_core.embed import EmbeddingBackend, make_backend
+from baba_core.face_settings import acknowledge_face_selection, read_face_selection
+from baba_core.inference import run_inference
 from baba_core.nats_conn import connect as nats_connect
 from baba_core.paths import CROPS, FACE_CROPS, MediaLayout
 from baba_core.pg_listen import ResilientListener
@@ -289,6 +292,12 @@ class Embedder:
         self._backend = backend
         self._face = face_stack
         self._face_model_key = face_model_key
+        self._face_loaded_pair: tuple[str, str] | None = None
+        self._processing_lock = asyncio.Lock()
+        self._reload_requested = asyncio.Event()
+        self._reload_task: asyncio.Task | None = None
+        self._native_task: asyncio.Task | None = None
+        self._native_stop = asyncio.Event()
         self._stats = StatsCollector(service="embedder")
         self._decoder = msgspec.msgpack.Decoder(_TracksMessage)
         self._listener: ResilientListener | None = None
@@ -313,27 +322,85 @@ class Embedder:
         # refresh after any DB drop so camera changes are picked up live.
         self._listener = ResilientListener(
             self._dsn,
-            ["cameras_changed"],
-            on_notify=self._on_cameras_changed,
-            on_connect=self._refresh_cameras,
+            ["cameras_changed", "face_recognition_changed"],
+            on_notify=self._on_config_changed,
+            on_connect=self._reconcile,
             name="embedder-listen",
         )
         await self._listener.start()
+        self._reload_task = spawn(self._reload_loop(), name="embedder-face-reload", log=log)
         self._nc = await nats_connect(self._nats_url, name="embedder")
         await self._nc.subscribe(SUBJECT_TRACKS_IN, cb=self._on_tracks)
         await self._stats.start(self._nc)
         log.info("embedder ready: subscribed to %s", SUBJECT_TRACKS_IN)
 
-    def _on_cameras_changed(self, *_a) -> None:
+    def _on_config_changed(self, channel: str, _payload: str) -> None:
         # Refresh on the loop; can't await inside the asyncpg notify callback.
         if self._pool is None:
             return
-        spawn(self._refresh_cameras())
+        if channel == "face_recognition_changed":
+            self._reload_requested.set()
+        else:
+            spawn(self._refresh_cameras())
 
     async def _refresh_cameras(self) -> None:
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await self._cameras.refresh(conn)
+
+    async def _reconcile(self) -> None:
+        await self._refresh_cameras()
+        await self._reload_face_settings()
+
+    async def _reload_loop(self) -> None:
+        while True:
+            await self._reload_requested.wait()
+            self._reload_requested.clear()
+            try:
+                await self._reload_face_settings()
+            except Exception:
+                log.exception("embedder face settings refresh failed")
+                await asyncio.sleep(1.0)
+                self._reload_requested.set()
+
+    async def _reload_face_settings(self) -> None:
+        assert self._pool is not None
+        async with self._processing_lock:
+            selection = await read_face_selection(self._pool)
+            pair = (selection.detector_key, selection.model_key)
+            try:
+                if self._face_loaded_pair != pair:
+                    path = os.environ.get("BABA_FACE_DETECTOR_MODEL", "").strip()
+                    if not path:
+                        raise RuntimeError("face detector is not configured")
+                    stack, detector, model = await run_inference(
+                        make_face_stack_for_model, yunet_path=Path(path), models_dir=Path("/models"),
+                        model_key=selection.model_key, detector_key=selection.detector_key,
+                    )
+                    if stack is None or (detector, model) != pair:
+                        raise RuntimeError("selected face models could not be loaded")
+                    await self._stop_native_reader()
+                    self._face, self._face_model_key = stack, model
+                    self._face_loaded_pair = pair
+                    self._face_crops_dir.mkdir(parents=True, exist_ok=True)
+                    reader = self.native_face_reader()
+                    self._native_task = spawn(
+                        reader.run(self._native_stop), name="embedder-native-faces", log=log
+                    )
+                    log.info("face stack loaded revision=%s detector=%s model=%s",
+                             selection.revision, detector, model)
+            except Exception as exc:
+                log.exception("embedder face activation failed")
+                await acknowledge_face_selection(self._pool, "embedder", selection, str(exc))
+                return
+            await acknowledge_face_selection(self._pool, "embedder", selection)
+
+    async def _stop_native_reader(self) -> None:
+        if self._native_task is not None:
+            self._native_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._native_task
+            self._native_task = None
 
     def _gc_debounce(self, now_ns: int) -> None:
         # GC the debounce map. Its keys are (camera, local_track_id) and a
@@ -383,6 +450,10 @@ class Embedder:
         return eligible
 
     async def _on_tracks(self, msg) -> None:
+        async with self._processing_lock:
+            await self._process_tracks(msg)
+
+    async def _process_tracks(self, msg) -> None:
         try:
             wire = self._decoder.decode(msg.data)
         except Exception:
@@ -420,7 +491,7 @@ class Embedder:
         # drift. Punt to the default executor so the loop stays live.
         self._stats.incr("crops", len(crops))
         with self._stats.timer("embed_ms"):
-            embeddings = await asyncio.to_thread(self._backend.embed, crops)
+            embeddings = await run_inference(self._backend.embed, crops)
         self._stats.incr("embeddings_out", len(crops))
         # Stamp debounce only on tracks we actually embedded.
         for t in meta:
@@ -515,7 +586,7 @@ class Embedder:
                                     self._face.detector.detect(aligned) is not None))
                     return out
 
-                results = await asyncio.to_thread(_run_faces)
+                results = await run_inference(_run_faces)
                 for i, vec, aligned, score, px, frontality, realigned in results:
                     face_scores[i] = score
                     face_pxs[i] = px
@@ -599,9 +670,16 @@ class Embedder:
         return NativeFaceReader(
             self._pool, self._media_root, self._face,
             self._face_model_key, self._face_crops_dir,
+            lock=self._processing_lock,
         )
 
     async def stop(self) -> None:
+        if self._reload_task is not None:
+            self._reload_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._reload_task
+        self._native_stop.set()
+        await self._stop_native_reader()
         await self._stats.stop()
         for r in self._readers.values():
             r.detach()
@@ -628,141 +706,28 @@ class Embedder:
                 log.exception("asyncpg pool close raised during shutdown — ignored")
 
 
-async def _load_face_settings_from_db(dsn: str) -> tuple[str | None, str | None]:
-    """One-shot read of face_recognition_settings.{model_key,detector_key}.
-    Returns (None, None) when the DB is unreachable, the singleton hasn't
-    been seeded yet, or the table itself doesn't exist. All three cases
-    fall through to env-var defaults in the caller. The detector_key
-    component is also None when the column doesn't exist yet (pre-033
-    install)."""
-    try:
-        conn = await asyncpg.connect(dsn)
-    except (OSError, asyncpg.PostgresError) as e:
-        log.warning("face settings DB lookup failed (connect): %s", e)
-        return None, None
-    try:
-        # Try the new schema first (with detector_key). Fall back to
-        # model-only for installs where migration 033 hasn't run yet.
-        try:
-            row = await conn.fetchrow(
-                "SELECT model_key, detector_key FROM face_recognition_settings WHERE id = 1"
-            )
-            if row is None:
-                return None, None
-            return row["model_key"], row["detector_key"]
-        except asyncpg.exceptions.UndefinedColumnError:
-            row = await conn.fetchrow(
-                "SELECT model_key FROM face_recognition_settings WHERE id = 1"
-            )
-            if row is None:
-                return None, None
-            return row["model_key"], None
-        except asyncpg.exceptions.UndefinedTableError:
-            log.info(
-                "face_recognition_settings table not yet present — migration "
-                "032 will create it on next api startup; using env defaults"
-            )
-            return None, None
-    finally:
-        await conn.close()
-
-
 async def _run() -> None:
     dsn = dsn_from_env()
     nats_url = os.environ.get("BABA_NATS_URL", "nats://nats:4222")
     model_env = os.environ.get("BABA_EMBEDDER_MODEL", "").strip()
     model_path = Path(model_env) if model_env else None
-    # CPU inference: keep numpy/blas thread counts modest so we don't
-    # contend with the rest of the box. ONNX runtime has its own knob.
     os.environ.setdefault("OMP_NUM_THREADS", "4")
     backend = make_backend(model_path)
     media_root = Path(os.environ.get("BABA_MEDIA_PATH", "/media"))
-
-    # Optional face stack. The embedder model is selected via DB first
-    # (face_recognition_settings.model_key, set by the Settings UI),
-    # falling back to BABA_FACE_RECOGNITION_MODEL env var for installs
-    # that haven't migrated yet, and finally to "auraface" as the
-    # always-shipping commercial-clean default.
-    #
-    # We read the DB synchronously here using a short-lived connection
-    # rather than the asyncpg pool because the pool isn't created until
-    # the Embedder.start() call below. The cost is one round-trip at
-    # process boot — negligible.
-    face_detector_path = os.environ.get("BABA_FACE_DETECTOR_MODEL", "").strip()
-    db_model_key, db_detector_key = await _load_face_settings_from_db(dsn)
-    face_model_key = (
-        db_model_key
-        or os.environ.get(
-            "BABA_FACE_RECOGNITION_MODEL",
-            "auraface",
-        ).strip()
-        or "auraface"
-    )
-    face_detector_key = (
-        db_detector_key
-        or os.environ.get(
-            "BABA_FACE_DETECTOR",
-            "yunet",
-        ).strip()
-        or "yunet"
-    )
-    face_stack = None
-    active_face_model = face_model_key
-    active_face_detector = face_detector_key
-    if face_detector_path:
-        from baba_core import make_face_stack_for_model
-
-        face_stack, active_face_detector, active_face_model = make_face_stack_for_model(
-            yunet_path=Path(face_detector_path),
-            models_dir=Path("/models"),
-            model_key=face_model_key,
-            detector_key=face_detector_key,
-        )
-    if face_stack is None:
-        log.info(
-            "face stack disabled — set BABA_FACE_DETECTOR_MODEL to a "
-            "YuNet ONNX path to enable face-aware re-ID. Selected "
-            "embedder model: %s detector: %s",
-            face_model_key,
-            face_detector_key,
-        )
-    else:
-        log.info(
-            "face stack active with detector=%s embedder=%s",
-            active_face_detector,
-            active_face_model,
-        )
-
-    embedder = Embedder(
-        dsn,
-        nats_url,
-        backend,
-        media_root=media_root,
-        face_stack=face_stack,
-        face_model_key=active_face_model,
-    )
+    embedder = Embedder(dsn, nats_url, backend, media_root=media_root)
     await embedder.start()
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, stop.set)
-
     tick_task = spawn(HealthMarker("baba", "embedder").run_loop(), name="embedder-health", log=log)
-    tasks = [tick_task]
-    # The ring is a preview of the recording, and for a face that difference is
-    # the whole answer: 57.9 px against 124 on the same moment, measured on the
-    # patio 31.08. Only this service has the face stack loaded, so the re-read
-    # rides here — rarely, on a small bite, with nothing waiting on it.
-    reader = embedder.native_face_reader()
-    if reader is not None:
-        tasks.append(spawn(reader.run(stop), name="embedder-native-faces"))
-
-    await stop.wait()
-    for t in tasks:
-        t.cancel()
+    try:
+        await stop.wait()
+    finally:
+        tick_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await t
-    await embedder.stop()
+            await tick_task
+        await embedder.stop()
 
 
 def main() -> None:
