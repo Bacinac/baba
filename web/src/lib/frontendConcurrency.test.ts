@@ -218,11 +218,12 @@ describe("visual search invalidation", () => {
   });
 });
 
-function faceSettings(status: "active" | "pending" | "error", model = "new") {
+function faceSettings(status: "active" | "pending" | "error", model = "new", jobId: string | null = null) {
   return {
     model_key: model, detector_key: "yunet", match_threshold: 0.4,
     active_model_key: status === "active" ? model : "old", active_detector_key: "yunet",
     activation_status: status, activation_error: status === "error" ? "Model load failed" : null,
+    recompute_job_id: jobId,
   };
 }
 
@@ -233,68 +234,120 @@ function faceFixture() {
     models: [{ key: "new", bundled_with_baba: true, file_present: true }],
     detectors: [{ key: "yunet", bundled_with_baba: true, file_present: true }],
     loading: false, saving: false, error: null, activeJob: null, startingRecompute: false,
-    pendingRecompute: null, pollTimer: null, activationTimer: null,
+    activationPollError: null, recomputePollError: null,
+    attachedJobId: null as string | null, jobSeq: 0, activationPollSeq: 0, pollTimer: null, activationTimer: null,
     api: {
       saveFaceRecognitionSettings: vi.fn(async () => faceSettings("pending")),
       getFaceRecognitionSettings: vi.fn(async () => faceSettings("pending")),
       startFaceRecompute: vi.fn(async () => ({ job_id: "job-1" })),
       getFaceRecomputeStatus: vi.fn(async () => ({ job_id: "job-1", status: "running" })),
+      listFaceModels: vi.fn(async () => []), listFaceDetectors: vi.fn(async () => []),
     },
     t: (key: string) => key,
   };
   const actions = evaluate<CameraActions>("./FaceRecognitionCard.svelte", [
-    "activationReady", "scheduleActivation", "recomputeIfActivated", "pollActivation",
+    "activationReady", "recomputeBusy", "scheduleActivation", "attachRecompute", "pollActivation", "refresh",
     "selectedModel", "selectedDetector", "save", "pollRecompute", "startRecompute",
   ], scope);
   return { scope, actions };
 }
 
 describe("face model activation", () => {
-  it("waits for both producers to confirm the saved model before recomputing", async () => {
+  it.each(["activation", "recompute"])("clears a recovered %s poll error while preserving validation feedback", async (kind) => {
     const { scope, actions } = faceFixture();
-    await actions.save();
-    expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
-    await actions.startRecompute();
-    expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
+    const feedback = scope as unknown as { error: string; activationPollError: string | null; recomputePollError: string | null };
+    if (kind === "activation") scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active"));
+    else scope.attachedJobId = "job-1";
+    feedback.error = "Model weights missing";
+    const poll = kind === "activation"
+      ? () => actions.pollActivation()
+      : () => actions.pollRecompute("job-1");
+    const request = kind === "activation"
+      ? scope.api.getFaceRecognitionSettings
+      : scope.api.getFaceRecomputeStatus;
+    request.mockRejectedValueOnce(new Error("offline"));
+    await poll();
+    expect(kind === "activation" ? feedback.activationPollError : feedback.recomputePollError).toBe("offline");
+    expect(feedback.error).toBe("Model weights missing");
     await vi.advanceTimersByTimeAsync(1500);
-    expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
-    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active"));
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(scope.api.startFaceRecompute).toHaveBeenCalledTimes(1);
+    expect(feedback.activationPollError).toBeNull();
+    expect(feedback.recomputePollError).toBeNull();
+    expect(feedback.error).toBe("Model weights missing");
   });
 
-  it("does not recompute a saved pair that another selection replaced", async () => {
+  it("attaches the server job after save and never submits an automatic recompute", async () => {
     const { scope, actions } = faceFixture();
+    scope.api.saveFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "new", "job-1"));
+    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "new", "job-1"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-1", status: "pending" });
     await actions.save();
-    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active", "other"));
+    expect(scope.activeJob).toEqual({ job_id: "job-1", status: "pending" });
+    await actions.startRecompute();
+    expect(scope.api.saveFaceRecognitionSettings).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(1500);
+    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active", "new", "job-1"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-1", status: "running" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(scope.activeJob).toEqual({ job_id: "job-1", status: "running" });
     expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
-    expect(scope.pendingRecompute).toBeNull();
+    expect(scope.activationTimer).not.toBeNull();
+  });
+
+  it("resumes a persisted job on mount and stops polling once it finishes", async () => {
+    const { scope, actions } = faceFixture();
+    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active", "new", "job-1"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValueOnce({ job_id: "job-1", status: "pending" });
+    await actions.refresh();
+    expect(actions.recomputeBusy()).toBe(true);
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-1", status: "done" });
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(actions.recomputeBusy()).toBe(false);
+    expect(scope.activeJob).toEqual({ job_id: "job-1", status: "done" });
+    expect(scope.pollTimer).toBeNull();
+    expect(scope.activationTimer).toBeNull();
+    expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
   });
 
   it("requires the active detector to match as well as the active model", async () => {
     const { scope, actions } = faceFixture();
-    await actions.save();
-    scope.api.getFaceRecognitionSettings.mockResolvedValue({
+    scope.settings = {
       ...faceSettings("active"), active_detector_key: "other-detector",
-    });
-    await vi.advanceTimersByTimeAsync(1500);
+    };
+    await actions.startRecompute();
     expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
   });
 
-  it("retries the same failed selection and recomputes only after that retry activates", async () => {
+  it("saves another model while the previous job is running and attaches the new pending job", async () => {
     const { scope, actions } = faceFixture();
+    await actions.attachRecompute("job-1");
+    scope.modelKey = "other";
+    scope.models.push({ key: "other", bundled_with_baba: true, file_present: true });
+    scope.api.saveFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "other", "job-2"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-2", status: "pending" });
     await actions.save();
-    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("error"));
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(scope.settings.activation_status).toBe("error");
+    expect(scope.api.saveFaceRecognitionSettings).toHaveBeenCalledWith({
+      model_key: "other", detector_key: "yunet", match_threshold: 0.4,
+    });
+    expect(scope.activeJob).toEqual({ job_id: "job-2", status: "pending" });
     expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
-    expect(scope.pendingRecompute).toBeNull();
+  });
+
+  it.each(["job-1", "job-2"])("retries a failed selection and resumes job %s", async (jobId) => {
+    const { scope, actions } = faceFixture();
+    scope.api.saveFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "new", "job-1"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-1", status: "pending" });
+    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("error", "new", "job-1"));
+    await actions.save();
+    await actions.pollActivation();
+    expect(scope.settings.activation_status).toBe("error");
+    scope.api.saveFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "new", jobId));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: jobId, status: "pending" });
+    const previousReads = scope.api.getFaceRecomputeStatus.mock.calls.length;
     await actions.save();
     expect(scope.api.saveFaceRecognitionSettings).toHaveBeenCalledTimes(2);
-    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active"));
-    await vi.advanceTimersByTimeAsync(1500);
-    expect(scope.api.startFaceRecompute).toHaveBeenCalledTimes(1);
+    expect(scope.activeJob).toEqual({ job_id: jobId, status: "pending" });
+    expect(scope.api.getFaceRecomputeStatus).toHaveBeenCalledTimes(previousReads + 1);
+    expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
   });
 
   it("ignores an activation answer that arrives after a newer save", async () => {
@@ -313,6 +366,21 @@ describe("face model activation", () => {
     expect(scope.api.startFaceRecompute).not.toHaveBeenCalled();
   });
 
+  it("ignores a manual start answer after a newer model save", async () => {
+    const { scope, actions } = faceFixture();
+    scope.settings = faceSettings("active");
+    const late = deferred<{ job_id: string }>();
+    scope.api.startFaceRecompute.mockImplementationOnce(() => late.promise);
+    const starting = actions.startRecompute();
+    scope.api.saveFaceRecognitionSettings.mockResolvedValue(faceSettings("pending", "new", "job-2"));
+    scope.api.getFaceRecomputeStatus.mockResolvedValue({ job_id: "job-2", status: "pending" });
+    await actions.save();
+    late.resolve({ job_id: "job-1" });
+    await starting;
+    expect(scope.activeJob).toEqual({ job_id: "job-2", status: "pending" });
+    expect(scope.api.getFaceRecomputeStatus).not.toHaveBeenCalledWith("job-1");
+  });
+
   it("does not recreate polling or start a job after disposal during an activation request", async () => {
     const { scope, actions } = faceFixture();
     const late = deferred<ReturnType<typeof faceSettings>>();
@@ -328,6 +396,7 @@ describe("face model activation", () => {
   it("keeps a newly started recompute locked until its first status request succeeds", async () => {
     const { scope, actions } = faceFixture();
     scope.settings = faceSettings("active");
+    scope.api.getFaceRecognitionSettings.mockResolvedValue(faceSettings("active", "new", "job-1"));
     scope.api.getFaceRecomputeStatus.mockRejectedValueOnce(new Error("offline"));
     await actions.startRecompute();
     expect(scope.startingRecompute).toBe(true);
@@ -336,5 +405,19 @@ describe("face model activation", () => {
     await vi.advanceTimersByTimeAsync(1500);
     expect(scope.startingRecompute).toBe(false);
     expect(scope.activeJob).toEqual({ job_id: "job-1", status: "running" });
+  });
+
+  it.each(["replaced", "disposed"])("ignores a job response after it is %s", async (kind) => {
+    const { scope, actions } = faceFixture();
+    const late = deferred<{ job_id: string; status: string }>();
+    scope.api.getFaceRecomputeStatus.mockImplementationOnce(() => late.promise);
+    const polling = actions.attachRecompute("job-1");
+    if (kind === "disposed") scope.disposed = true;
+    else await actions.attachRecompute("job-2");
+    const expected = scope.activeJob;
+    late.resolve({ job_id: "job-1", status: "running" });
+    await polling;
+    expect(scope.activeJob).toBe(expected);
+    if (kind === "disposed") expect(scope.pollTimer).toBeNull();
   });
 });

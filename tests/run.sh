@@ -86,7 +86,7 @@ local_image() {
 TRACKER_TESTS="test_tracker_audit.py test_tracker_association.py test_anchor_hold.py test_tracker_service.py"
 API_TESTS="test_role_gate.py test_login_limit.py test_camera_streams_api.py test_audit_vocabulary.py test_incident_changes.py test_sightings_feed.py"
 PG_TESTS="test_recording_retention.py test_recording_health.py test_tracks_retention.py test_camera_streams.py test_finalize.py test_observe.py test_scene_unsure.py test_review_event_manager.py"
-API_PG_TESTS="test_face_model_space.py test_reference_photo_enrolment.py test_face_recompute.py test_review_fixes.py"
+API_PG_TESTS="test_face_model_space.py test_reference_photo_enrolment.py test_face_recompute.py test_face_recompute_queue.py test_review_fixes.py"
 
 IMG=$(local_image event-manager 'intel|nvidia|cpu') || exit 1
 TIMG=$(local_image tracker 'intel|nvidia|cpu') || exit 1

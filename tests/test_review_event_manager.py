@@ -5,6 +5,31 @@ from unittest.mock import AsyncMock
 import pytest
 
 
+def test_departure_opens_a_new_visit_while_parked_arrival_is_waiting_for_commit(pg, tmp_path):
+    from test_observe import CAR, run, track
+
+    async def body(w):
+        await w.tick(track(1, 300, cls=CAR))
+        await w.tick(track(1, 320, cls=CAR, motion="parked"))
+        arrival = w.rec(1)
+        w.em._queue_finalization("gate", 1, arrival, parked=True)
+        arrival.park_finalize_due = False
+        finalize = w.em._finalize
+        w.em._finalize = AsyncMock(side_effect=RuntimeError("database unavailable"))
+        await w.em._drain_finalizations()
+        assert not arrival.parked_finalized
+        await w.tick(track(1, 450, cls=CAR))
+        departure = w.rec(1)
+        assert departure is not arrival and departure.db_track_id != arrival.db_track_id
+        assert w.em._pending_finalizations[arrival.db_track_id].record.last_seen_ns == arrival.last_seen_ns
+        w.em._finalize = finalize
+        await w.em._drain_finalizations()
+        assert arrival.parked_finalized and not departure.parked_finalized
+        assert w.rec(1) is departure
+
+    run(pg, tmp_path, body)
+
+
 def test_finalization_retries_the_entire_transaction_without_duplicate_events(pg, tmp_path):
     from test_finalize import _run
 

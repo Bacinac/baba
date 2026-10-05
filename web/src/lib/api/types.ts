@@ -743,6 +743,7 @@ export interface FaceRecognitionSettings {
   active_detector_key: string;
   activation_status: "active" | "pending" | "error";
   activation_error: string | null;
+  recompute_job_id: string | null;
   match_threshold: number;
   updated_at: string;
   updated_by_user: string | null;
@@ -765,7 +766,7 @@ export interface FaceRecognitionSettingsIn {
 export interface FaceRecomputeStatus {
   job_id: string;
   model_key: string;
-  status: "running" | "done" | "failed" | "cancelled";
+  status: "pending" | "running" | "done" | "failed" | "cancelled";
   total: number;
   processed: number;
   succeeded: number;

@@ -1,12 +1,12 @@
 # BABA code review
 
-This review examines BABA's source, service contracts, data lifecycle, security boundaries, frontend behaviour and deployment configuration. The architecture has a clear division between camera I/O, shared inference and persistent metadata. The most consequential remaining defects concern the video proxy's authorization, state being discarded before successful persistence, and notification filters depending on track rows that do not yet exist.
+This review examines BABA's source, service contracts, data lifecycle, security boundaries, frontend behaviour and deployment configuration. The architecture has a clear division between camera I/O, shared inference and persistent metadata. The most consequential baseline defects concerned the video proxy's authorization, state being discarded before successful persistence, and notification filters depending on track rows that did not yet exist.
 
-The baseline contains **21 findings: 5 P1, 14 P2 and 2 P3**. Every finding below preserves the original trigger, source evidence, correction and acceptance check. Following the user's instruction to continue with fixes, all 21 have been addressed in the working tree. The implementation record below distinguishes source corrections from production rollout.
+The baseline contains **21 findings: 5 P1, 14 P2 and 2 P3**. Every finding below preserves the original trigger, source evidence, correction and acceptance check. All 21 were corrected and deployed in `92acd3b`, version 1.0.22. The follow-up section records additional corrections requested after that rollout.
 
 ## Correction status — 5 October 2026
 
-All entries below are **implemented and locally verified; production deployment is pending**. Historical evidence and line references in the findings describe the review baseline, before these corrections.
+All 21 entries below are **implemented, verified and deployed** on production and both reference instances. Historical evidence and line references in the findings describe the review baseline, before these corrections.
 
 | Finding | Implemented correction | Verification |
 | --- | --- | --- |
@@ -32,11 +32,24 @@ All entries below are **implemented and locally verified; production deployment 
 | 20 | Clearing/replacing visual search invalidates in-flight generations | Deferred visual-search response regressions |
 | 21 | Architecture now describes face-based naming, bounded body grouping, OSNet body embeddings and DINOv2 scene embeddings | Documentation checked against current producer and matcher code |
 
-Executed correction checks: **37 targeted Python tests**, **20 frontend concurrency tests**, the Node HTTP proxy regression, Ruff, Svelte static checks (zero errors and warnings), shell syntax and diff whitespace. The Python tests use PostgreSQL 18 with all **107 migrations** and isolated data. No full application suite was run from the CLI.
+Initial correction checks: **37 targeted Python tests**, **20 frontend concurrency tests**, the Node HTTP proxy regression, Ruff, Svelte static checks (zero errors and warnings), shell syntax and diff whitespace. The Python tests use PostgreSQL 18 with all **107 migrations** and isolated data. The configured pre-push hook subsequently passed its required test, dependency, public-content and secret gates.
 
 The CPU base, API and production web images were rebuilt under temporary review tags. `baba-fix-api` and `baba-fix-web` were started against disposable PostgreSQL, NATS and go2rtc containers on an isolated network namespace without host ports. Smoke checks covered the page, health, login, visible face-activation failure for deliberately unconfigured models, traversal rejection, viewer restrictions and admin access. These containers were removed after verification. The frontend build emits adapter-generated empty-environment-chunk and bundler timing diagnostics; the static application checks remain clean.
 
-No commit, push or production deployment was performed. Rollout requires the new base images and consuming service images, API migration 107 before the dependent services start, and a production web rebuild. The existing Compose API health dependencies provide the migration start gate. Real GPU model loading, camera feeds and production service health remain target-host acceptance checks; the isolated smoke environment intentionally contains no camera or learned-model data.
+Commit `92acd3b` was pushed and deployed through `deploy/deploy.sh all`. Both Intel instances had all 14 running services healthy; the NVIDIA reference passed its health gate and was parked by its configured policy. Migration 107 and matching API/embedder face acknowledgements were verified on all three instances, including the production SCRFD/TopoFR pair at its existing threshold 0.75. All seven production cameras had fresh recordings at the final 12:02 CEST check. Public proxy checks returned 400 for traversal and 401 for anonymous administrative access. The public demo was refreshed. These checks establish startup, configuration activation and recording continuity, not recognition quality or a live model-switch benchmark.
+
+## Follow-up corrections — 5 October 2026
+
+The user requested continued changes after the completed rollout, then authorized commit, push and deploy of these four corrections. The verification below records the follow-up bundle before that second rollout. The running revision is reported by `/version` and `deploy/deploy.sh --status`.
+
+| Finding | Defect and correction | Verification |
+| --- | --- | --- |
+| F01 | Cancelling `run_inference` cancelled its deadline while the native thread remained blocked. The wrapper now retains ownership and the original deadline until the thread finishes; repeated cancellation cannot bypass process recovery. | A real child process reproduced the old hang; normal and cancelled blocked operations now exit within the watchdog bound. A released native thread completes before cancellation propagates. |
+| F02 | Auto-recompute intent existed only in the face settings card, so navigation lost it. Migration 108 adds the detector and settings revision to durable pending jobs. Settings saves queue the intent in the same transaction; one API worker claims it only after both activation acknowledgements. Restart resumes current work, newer selections supersede pending work, and stale native results cannot overwrite references. The card attaches to the stored job on reload. | PostgreSQL regressions cover activation failure/retry, supersession, concurrent claims, restart, lost completion writes, manual duplicate requests and stale native results. Frontend regressions cover reload, pending/running transitions, rebasing and late responses. |
+| F03 | A departing vehicle reused its arrival record while parked finalization was retrying. Observation now treats a queued parked closure as a closed visit, preserving the pending arrival snapshot and allocating a separate departure UUID. | Injected finalization failure followed by departure and recovery preserves two distinct visits; committing the arrival cannot mark the departure finalized. |
+| F04 | Successful polling did not clear old activation/job network errors. Separate polling errors now clear on recovery, preserve Save validation errors and keep retrying the final settings refresh. | Deferred-response frontend regressions cover error recovery, disposal and superseding saves. |
+
+Follow-up checks: **37 targeted Python tests**, **27 frontend concurrency tests**, Ruff, Svelte static checks (zero errors and warnings), i18n consistency and whitespace checks. Fresh PostgreSQL 18 applied all **108 migrations**. CPU base, API, event manager and production web images were rebuilt under temporary follow-up tags. Actual API/web runtime checks verified login, settings, pending job creation and preservation of the same job after API restart; the event manager connected to PostgreSQL and NATS and maintained its health marker. These checks use fabricated credentials, no real cameras or model weights, and no host ports. This is the local verification snapshot before the authorized follow-up commit, push and deploy.
 
 ## Review baseline
 
@@ -73,9 +86,9 @@ The review was risk directed across the repository. Deeper control-flow and faul
 
 Existing project memory and earlier audits were used to distinguish current defects from repaired issues and accepted policies. In particular, local storage of camera credentials and ephemeral NATS/notification delivery were treated as established decisions. The external disclosure in finding 01 is a separate authorization defect.
 
-## Verification performed
+## Baseline verification performed
 
-All Python execution and Node tooling ran in disposable containers. Source mounts were read only. Database probes used a disposable PostgreSQL 18 instance with pgvector, no published ports and fabricated records. The go2rtc probe used version 1.9.14 with fabricated streams and networking restricted to its container. Production was not modified or restarted.
+During the original source review, all Python execution and Node tooling ran in disposable containers. Source mounts were read only. Database probes used a disposable PostgreSQL 18 instance with pgvector, no published ports and fabricated records. The go2rtc probe used version 1.9.14 with fabricated streams and networking restricted to its container. Production was not modified or restarted at that stage; the later authorized rollout is recorded above.
 
 | Check | Result and scope |
 | --- | --- |
@@ -88,7 +101,7 @@ All Python execution and Node tooling ran in disposable containers. Source mount
 | Fresh schema | All 106 migrations applied successfully to disposable PostgreSQL 18 with pgvector |
 | Targeted probes | Authorization, SQL races, asynchronous lifecycle, failure recovery and resource bounds reproduced the defects identified below |
 
-Static checks passing does not establish correctness of failure paths or concurrent requests. The probes below deliberately exercise those paths. The full pytest/vitest suite, production rebuild, hardware inference benchmark, image vulnerability scan and live camera end-to-end test were not performed.
+Static checks passing does not establish correctness of failure paths or concurrent requests. The probes below deliberately exercise those paths. At the baseline review stage, the full pytest/vitest suite, production rebuild, hardware inference benchmark, image vulnerability scan and live camera end-to-end test had not been performed.
 
 ## Findings
 
@@ -351,7 +364,7 @@ The principles state that body embeddings identify people across cameras and day
 3. **Make recovery and configuration deterministic:** findings 06–10, 12, 13, 18 and 19. Coordinate model activation, make health reflect in-flight work, close failed connection/process attempts, reconcile all settings, enforce single-use recovery and constrain expensive media work.
 4. **Correct asynchronous editing and navigation:** findings 14–17 and 20, then align documentation in 21. Cover late responses, disposal and multi-field edits with controlled scheduling.
 
-This was the implementation order for the original baseline. The full set has now been addressed; the correction-status section records verification and the remaining production rollout boundary.
+This was the implementation order for the original baseline. The full set has now been addressed and deployed; the follow-up section distinguishes the additional working-tree corrections.
 
 ## Architecture and maintainability assessment
 
@@ -365,7 +378,7 @@ The shared-memory writer already invalidates a slot before overwriting pixels an
 
 ## Limits of the conclusion
 
-The findings describe the reviewed checkout and reproducible failure conditions. They do not establish how often any defect has occurred in production. Live configuration can override file defaults, so this document does not assert the active production model, threshold, camera settings or hardware performance.
+The findings describe the reviewed checkout and reproducible failure conditions. They do not establish how often any defect has occurred in production. Live configuration can override file defaults; the production model and recording checks above describe the verified deployment snapshot, not an inference from defaults or a hardware performance assessment.
 
 Hardware-specific inference, decoder drivers, camera reconnect behaviour under real network loss, learned-model quality, recording throughput and disk failure behaviour require target-host checks. Fresh migration success does not prove every upgrade path from an existing populated database. Dependency and image vulnerability scanning and a complete weights-license assessment were outside the executed checks.
 

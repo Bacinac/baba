@@ -66,6 +66,7 @@ def test_recompute_embeds_aligned_faces_directly_and_detects_the_rest(pg, tmp_pa
         try:
             gid = uuid4()
             async with pool.acquire() as conn:
+                await conn.execute("UPDATE face_recognition_settings SET model_key='m2', detector_key='scrfd_10g'")
                 await conn.execute(
                     "INSERT INTO identity_labels (global_id, name, kind) VALUES ($1, 'x', 'person')",
                     gid,

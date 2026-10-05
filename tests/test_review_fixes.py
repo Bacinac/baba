@@ -198,11 +198,39 @@ def test_ffprobe_is_killed_and_reaped_on_timeout_and_cancellation(monkeypatch, f
     asyncio.run(main())
 
 
-def test_stuck_native_inference_exits_the_process():
-    code = "import asyncio,time; from baba_core.inference import run_inference; asyncio.run(run_inference(time.sleep,60,timeout_s=.05))"
+@pytest.mark.parametrize("cancelled", [False, True])
+def test_stuck_native_inference_exits_the_process(cancelled):
+    code = "import asyncio,time; from baba_core.inference import run_inference; from home_core.tasks import spawn\n"
+    code += "async def main():\n t=spawn(run_inference(time.sleep,60,timeout_s=.05))\n"
+    if cancelled:
+        code += " await asyncio.sleep(.01)\n t.cancel()\n t.cancel()\n"
+    code += " await t\nasyncio.run(main())"
     result = subprocess.run([sys.executable, "-c", code], capture_output=True, timeout=5)
     assert result.returncode == 1
     assert b"exiting for restart" in result.stderr
+
+
+def test_cancelled_inference_keeps_ownership_until_the_thread_finishes():
+    from home_core.tasks import spawn
+
+    async def main():
+        entered, release = threading.Event(), threading.Event()
+        def native():
+            entered.set()
+            assert release.wait(2)
+        task = spawn(run_inference(native, timeout_s=3))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            task.cancel()
+            await asyncio.sleep(.01)
+            task.cancel()
+            await asyncio.sleep(.01)
+            assert not task.done()
+        finally:
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    asyncio.run(main())
 
 
 def test_native_timeout_error_is_not_a_watchdog_expiry():
@@ -365,5 +393,3 @@ def test_clip_rechecks_codec_after_the_encoding_window_is_capped(tmp_path, monke
         await routes_recordings.get_camera_clip(uuid4(), req, start=start, end=start + 1000, range_header=None)
         assert cuts == [(240, codecs[0] == "hevc", 1)]
     asyncio.run(main())
-
-

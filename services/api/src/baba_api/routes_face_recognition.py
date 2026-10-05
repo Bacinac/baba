@@ -14,7 +14,6 @@ face stack, and the job row is the UI's polling endpoint.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from pathlib import Path
@@ -33,12 +32,13 @@ from baba_core import (
     resolve_model_path,
     vector_literal,
 )
+from baba_core.inference import run_inference
 from fastapi import APIRouter, Depends, HTTPException, Request
-from home_core.tasks import spawn
 from pydantic import BaseModel, Field
 
 from baba_api.audit import write_audit
 from baba_api.auth import AuthUser, current_user
+from baba_api.face_recompute_queue import queue_selection_recompute
 
 from .routes_identities._base import _recompute_label_aggregates
 from .routes_identities._reference_photos import (
@@ -94,6 +94,7 @@ class FaceRecognitionSettingsOut(BaseModel):
     active_detector_key: str
     activation_status: Literal["active", "pending", "error"]
     activation_error: str | None
+    recompute_job_id: str | None
     updated_at: str
     updated_by_user: str | None
     # Convenience for UI: reference photos tagged with this model
@@ -219,6 +220,10 @@ async def _load_settings(pool: asyncpg.Pool) -> FaceRecognitionSettingsOut:
             """,
             row["active_model_key"],
         )
+        job_id = await conn.fetchval(
+            "SELECT id FROM face_recompute_jobs WHERE model_key = $1 AND detector_key = $2 "
+            "ORDER BY started_at DESC LIMIT 1", row["model_key"], row["detector_key"],
+        )
     return FaceRecognitionSettingsOut(
         model_key=row["model_key"],
         detector_key=row["detector_key"],
@@ -228,6 +233,7 @@ async def _load_settings(pool: asyncpg.Pool) -> FaceRecognitionSettingsOut:
         activation_status=("error" if row["api_error"] or row["embedder_error"] else
                            "active" if row["active_revision"] == row["revision"] else "pending"),
         activation_error=row["api_error"] or row["embedder_error"],
+        recompute_job_id=str(job_id) if job_id is not None else None,
         updated_at=row["updated_at"].isoformat(),
         updated_by_user=row["updated_by_user"],
         references_in_active_model=int(counts["active"] or 0),
@@ -281,18 +287,20 @@ async def put_face_recognition_settings(
             )
 
     pool: asyncpg.Pool = request.app.state.pool
-    async with pool.acquire() as conn:
-        await conn.execute(
+    async with pool.acquire() as conn, conn.transaction():
+        previous = await conn.fetchrow("SELECT * FROM face_recognition_settings WHERE id = 1 FOR UPDATE")
+        selection = await conn.fetchrow(
             "UPDATE face_recognition_settings "
             "SET model_key = $1, detector_key = $2, match_threshold = $3, "
             "    updated_at = now(), updated_by = $4, revision = revision + 1, "
             "    api_revision = NULL, embedder_revision = NULL, "
-            "    api_error = NULL, embedder_error = NULL WHERE id = 1",
+            "    api_error = NULL, embedder_error = NULL WHERE id = 1 RETURNING *",
             body.model_key,
             body.detector_key,
             body.match_threshold,
             user.id,
         )
+        await queue_selection_recompute(conn, previous, selection, user.id)
 
     await write_audit(
         pool,
@@ -318,15 +326,12 @@ async def start_recompute(
     request: Request,
     user: AuthUser = Depends(current_user),
 ) -> RecomputeStartOut:
-    """Spawn a background job that recomputes every identity_reference_photos
-    row's face_embedding using the currently active model. UNIQUE partial
-    index on `status='running'` enforces single-job-at-a-time; the API
-    surfaces a clean 409 if the user double-clicks."""
+    """Queue reference recomputation for the confirmed active face pair."""
     pool: asyncpg.Pool = request.app.state.pool
-    async with pool.acquire() as conn:
+    async with pool.acquire() as conn, conn.transaction():
         settings = await conn.fetchrow(
             "SELECT active_model_key, active_detector_key, revision, active_revision, api_error, embedder_error "
-            "FROM face_recognition_settings WHERE id = 1"
+            "FROM face_recognition_settings WHERE id = 1 FOR UPDATE"
         )
         if settings is None:
             raise HTTPException(500, "face_recognition_settings singleton missing")
@@ -335,20 +340,21 @@ async def start_recompute(
             raise HTTPException(409, "face model activation is not complete")
         active_model = settings["active_model_key"]
         active_detector = settings["active_detector_key"]
+        if await conn.fetchval("SELECT EXISTS(SELECT 1 FROM face_recompute_jobs WHERE status IN ('pending', 'running'))"):
+            raise HTTPException(409, "a recompute job is already queued or running")
         try:
             row = await conn.fetchrow(
-                "INSERT INTO face_recompute_jobs (model_key, started_by) "
-                "VALUES ($1, $2) RETURNING id",
+                "INSERT INTO face_recompute_jobs (model_key, detector_key, settings_revision, started_by, status) "
+                "VALUES ($1, $2, $3, $4, 'pending') RETURNING id",
                 active_model,
+                active_detector,
+                settings["revision"],
                 user.id,
             )
         except asyncpg.exceptions.UniqueViolationError:
             raise HTTPException(409, "a recompute job is already running") from None
         job_id = str(row["id"])
 
-    # Spawn the worker — fire-and-forget; it talks back through the
-    # face_recompute_jobs row so the API stays stateless.
-    spawn(_run_recompute(pool, UUID(job_id), active_model, active_detector))
     return RecomputeStartOut(job_id=job_id)
 
 
@@ -441,30 +447,46 @@ async def _store_reembedding(conn, rid: UUID, model_key: str, result) -> None:
     )
 
 
+async def _recompute_selection_matches(conn, job_id: UUID, model_key: str, detector_key: str) -> bool:
+    selected = await conn.fetchrow(
+        "SELECT model_key, detector_key FROM face_recognition_settings WHERE id = 1 FOR SHARE"
+    )
+    if (selected["model_key"], selected["detector_key"]) == (model_key, detector_key):
+        return True
+    await conn.execute(
+        "UPDATE face_recompute_jobs SET status = 'cancelled', finished_at = now(), "
+        "error_message = 'superseded by a newer face selection' WHERE id = $1", job_id,
+    )
+    return False
+
+
 async def _run_recompute(
     pool: asyncpg.Pool,
     job_id: UUID,
     model_key: str,
-    detector_key: str = "yunet",
+    detector_key: str,
 ) -> None:
     """Background task: re-embed every reference photo's face under the
     active stack, then recompute every identity's centroid the way enrolment
     does it."""
     try:
+        async with pool.acquire() as conn, conn.transaction():
+            if not await _recompute_selection_matches(conn, job_id, model_key, detector_key):
+                return
         media_root = Path(os.environ.get("BABA_MEDIA_PATH", "/media"))
         yunet_path = Path(os.environ.get("BABA_FACE_DETECTOR_MODEL", "/models/face_yunet.onnx"))
 
         # Load + warmup is blocking (ONNX session init, possibly a TRT engine
         # build); keep it off the event loop so live WebRTC/SSE/requests don't
         # freeze for seconds while a recompute job spins up.
-        stack, _active_detector_key, active_key = await asyncio.to_thread(
+        stack, active_detector, active_key = await run_inference(
             make_face_stack_for_model,
             yunet_path=yunet_path,
             models_dir=_MODELS_DIR,
             model_key=model_key,
             detector_key=detector_key,
         )
-        if stack is None:
+        if stack is None or (active_detector, active_key) != (detector_key, model_key):
             await _mark_job_failed(
                 pool,
                 job_id,
@@ -472,8 +494,6 @@ async def _run_recompute(
             )
             return
 
-        # Always honour the resolved key in DB (in case a fallback
-        # happened — the user should see what actually ran).
         async with pool.acquire() as conn:
             rows = await conn.fetch("SELECT id, photo_path, source FROM identity_reference_photos")
             await conn.execute(
@@ -488,19 +508,21 @@ async def _run_recompute(
             path = media_root / r["photo_path"]
             aligned = r["source"] in _ALIGNED_FACE_SOURCES
             result = (
-                await asyncio.to_thread(_reembed, stack, path, aligned)
+                await run_inference(_reembed, stack, path, aligned)
                 if path.exists()
                 else "missing"
             )
-            if isinstance(result, str):
-                n_missing += 1
-            else:
-                async with pool.acquire() as conn:
-                    await _store_reembedding(conn, r["id"], active_key, result)
-                if result is None:
-                    n_no_face += 1
+            async with pool.acquire() as conn, conn.transaction():
+                if not await _recompute_selection_matches(conn, job_id, model_key, detector_key):
+                    return
+                if isinstance(result, str):
+                    n_missing += 1
                 else:
-                    n_ok += 1
+                    await _store_reembedding(conn, r["id"], active_key, result)
+                    if result is None:
+                        n_no_face += 1
+                    else:
+                        n_ok += 1
             if n_processed % 5 == 0 or n_processed == len(rows):
                 async with pool.acquire() as conn:
                     await conn.execute(
@@ -513,7 +535,9 @@ async def _run_recompute(
                         job_id,
                     )
 
-        async with pool.acquire() as conn:
+        async with pool.acquire() as conn, conn.transaction():
+            if not await _recompute_selection_matches(conn, job_id, model_key, detector_key):
+                return
             for gid in await conn.fetch("SELECT global_id FROM identity_labels"):
                 await _recompute_label_aggregates(conn, gid["global_id"])
             await conn.execute(

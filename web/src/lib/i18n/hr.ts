@@ -1078,6 +1078,7 @@ export const hr = {
 	'fr_job_no_face': 'bez lica',
 	'fr_job_missing': 'nedostaje',
 	'fr_job_unknown_error': 'nepoznata pogreška',
+	'fr_job_status_pending': 'na čekanju',
 	'fr_job_status_running': 'u tijeku',
 	'fr_job_status_done': 'gotovo',
 	'fr_job_status_failed': 'neuspjeh',

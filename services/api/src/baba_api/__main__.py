@@ -35,6 +35,7 @@ from baba_api.db import apply_migrations
 from baba_api.deliveries_sweeper import run_sweeper as run_deliveries_sweeper
 from baba_api.events_bridge import EventsNatsBridge
 from baba_api.events_retention_sweeper import run_sweeper as run_events_retention_sweeper
+from baba_api.face_recompute_queue import recover_recomputes, run_recompute_queue
 from baba_api.go2rtc_sync import Go2RtcSync
 from baba_api.live_view import TrackCache, live_router
 from baba_api.revision import revision, version_string
@@ -48,7 +49,7 @@ from baba_api.routes_camera_light import camera_light_router
 from baba_api.routes_detection_rules import detection_rules_router
 from baba_api.routes_discovery import discovery_router
 from baba_api.routes_events import events_router
-from baba_api.routes_face_recognition import face_recognition_router
+from baba_api.routes_face_recognition import _run_recompute, face_recognition_router
 from baba_api.routes_identities import auto_describe_loop, identities_router
 from baba_api.routes_notifications import notifications_router
 from baba_api.routes_probe import probe_router
@@ -253,24 +254,15 @@ async def lifespan(app: FastAPI):
     app.state.pool = pool
     app.state.secret_key = load_or_create_secret(config.state_dir, "BABA_SECRET_KEY")
     await bootstrap_admin_if_empty(pool, config.state_dir, env_prefix="BABA")
-    # A recompute runs as an in-process task, so a row still marked running at
-    # startup belongs to a process that is gone. A partial unique index allows
-    # exactly one such row, and nothing ever reconciled it: an api restart
-    # mid-job left `409 a recompute job is already running` forever, with no
-    # cancel route and no way out but editing the table by hand.
-    orphaned = await pool.execute(
-        "UPDATE face_recompute_jobs SET status = 'failed', "
-        "error_message = COALESCE(error_message, 'interrupted by an api restart'), "
-        "finished_at = COALESCE(finished_at, now()) WHERE status = 'running'"
-    )
-    if not orphaned.endswith(" 0"):
-        log.warning(
-            "face recompute job was still marked running at startup — its "
-            "process is gone, so it is closed as interrupted (%s)", orphaned,
-        )
+    await recover_recomputes(pool)
 
     face_settings_listener = await _start_face_stack(app, config, pool)
     app.state.face_settings_listener = face_settings_listener
+    face_recompute_stop = asyncio.Event()
+    face_recompute_task = spawn(
+        run_recompute_queue(pool, face_recompute_stop, _run_recompute),
+        name="face-recompute-queue", log=log,
+    )
 
     # Live mirror of cameras → go2rtc. Failures are logged + retried; we never
     # block API startup on go2rtc being reachable.
@@ -380,6 +372,10 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        face_recompute_stop.set()
+        face_recompute_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await face_recompute_task
         camera_override_stop.set()
         with suppress(asyncio.CancelledError, Exception):
             await camera_override_task

@@ -1078,6 +1078,7 @@ export const en = {
 	'fr_job_no_face': 'no face',
 	'fr_job_missing': 'missing',
 	'fr_job_unknown_error': 'unknown error',
+	'fr_job_status_pending': 'pending',
 	'fr_job_status_running': 'running',
 	'fr_job_status_done': 'done',
 	'fr_job_status_failed': 'failed',

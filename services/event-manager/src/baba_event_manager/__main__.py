@@ -679,17 +679,19 @@ class EventManager:
             )
             for t in msg.tracks:
                 rec = self._continued_record(cam, msg, t)
+                parked_closed = self._parked_visit_closed(rec)
                 # A vehicle whose visit was closed when it parked, moving again:
                 # that is a departure, and departures are their own visit. Drop
                 # the closed record so a fresh track id and start time are
                 # minted instead of reopening a row already written.
                 if (
                     rec is not None
-                    and rec.parked_finalized
+                    and parked_closed
                     and (t.motion_state or "active") == "active"
                 ):
                     cam.pop(t.track_id, None)
                     rec = None
+                    parked_closed = False
                 # Where this subject was LAST tick, captured before any update —
                 # the reference for the thumbnail teleport guard. None on a
                 # brand-new record (no history to jump from).
@@ -720,7 +722,7 @@ class EventManager:
                 # entirely — see TrackState.ever_active. If one later moves,
                 # membership is evaluated from that tick and a legitimate
                 # zone_enter fires then.
-                if zones_active and rec.ever_active:
+                if zones_active and rec.ever_active and not parked_closed:
                     self._note_zones(msg, t, rec, pending)
 
         # Sequential await is fine — events are sparse (only on transitions);
@@ -1687,6 +1689,12 @@ class EventManager:
         while True:
             await asyncio.sleep(1.0)
             await self._sweep_once()
+
+    def _parked_visit_closed(self, rec: TrackState | None) -> bool:
+        if rec is None:
+            return False
+        pending = self._pending_finalizations.get(rec.db_track_id)
+        return rec.parked_finalized or (pending is not None and pending.parked)
 
     def _queue_finalization(self, camera: str, local_id: int, rec: TrackState,
                             parked: bool = False) -> None:
