@@ -22,13 +22,14 @@ import asyncio
 import json
 import os
 import sys
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import nats
 from baba_core.wire import SUBJECT_STATE_CAPTURE
 
-CEST = timezone(timedelta(hours=2))
+LOCAL = ZoneInfo("Europe/Zagreb")
 
 
 async def main():
@@ -44,15 +45,17 @@ async def main():
 
     # `YYYY-MM-DD@hour` lands on the half hour; `@hour:minute` when the state
     # you want lasts minutes rather than hours (a car that stood for half an
-    # hour has no :30 to be sampled at). The date is spelled out because the
+    # hour has no :30 to be sampled at), `@hour:minute:second` when it lasts
+    # seconds (the gate stands open for twenty). The date is spelled out because the
     # month used to be a literal in this file, which quietly aimed every
     # harvest at August from the moment September started.
     moments = []
     for day_hour in spec.split(","):
         day, hm = day_hour.split("@")
         y, mo, d = (int(x) for x in day.split("-"))
-        h, _, m = hm.partition(":")
-        moments.append(datetime(y, mo, d, int(h), int(m or 30), tzinfo=CEST))
+        h, _, ms = hm.partition(":")
+        m, _, sec = ms.partition(":")
+        moments.append(datetime(y, mo, d, int(h), int(m or 30), int(sec or 0), tzinfo=LOCAL))
 
     nc = await nats.connect(os.environ.get("BABA_NATS_URL", "nats://nats:4222"), name="harvest")
     ok = bad = 0

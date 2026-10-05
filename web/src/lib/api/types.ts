@@ -1350,6 +1350,8 @@ export interface SceneRegionStatus {
   last_eval_at: string | null;
   last_label_raw: string | null;
   last_distance: number | null;
+  unsure: boolean;
+  unsure_since: string | null;
 }
 
 export interface SceneRegion {

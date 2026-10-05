@@ -227,6 +227,13 @@ _BLIND_CONTRAST = 5.0
 _UNSTEADY = 6.0
 _THUMB_W = 64
 
+# How long a region may go without an answer — `unknown` or a frozen frame —
+# before the state it holds stops being published as true. Withheld verdicts
+# are meant to be short: a car crossing the gate, the leaf swinging, the IR
+# switch at dusk cost a few samples. On 05.10 the gate read `unknown` for ten
+# minutes over a closed gate, and the state it held said open the whole time.
+_UNSURE_AFTER_S = 180.0
+
 
 def verdict(
     best_label: str | None, best_dist: float, per_state: dict[str, float],
@@ -833,21 +840,44 @@ class StateEvaluator:
     async def _status_eval_tick(
         self, region_id: UUID, raw_label: str, distance: float
     ) -> None:
+        """Record this read, and whether the held state is still vouched for.
+
+        Only the held state read again, or a committed transition, ends an
+        unsure run. A first read of a NEW label is still pending hysteresis;
+        clearing on it would publish the held state for a sample or two
+        between `unknown` and the new one — an `open` flash on a gate that is
+        closing, which DIDA would act on."""
         assert self._pool is not None
         async with self._pool.acquire() as conn:
             await conn.execute(
                 """
                 INSERT INTO scene_region_status
-                    (region_id, last_eval_at, last_label_raw, last_distance)
-                VALUES ($1, now(), $2, $3)
+                    (region_id, last_eval_at, last_label_raw, last_distance,
+                     unsure_since)
+                VALUES ($1, now(), $2, $3,
+                        CASE WHEN $2 = 'unknown' THEN now() END)
                 ON CONFLICT (region_id) DO UPDATE SET
                     last_eval_at  = now(),
                     last_label_raw = EXCLUDED.last_label_raw,
-                    last_distance  = EXCLUDED.last_distance
+                    last_distance  = EXCLUDED.last_distance,
+                    unsure_since = CASE
+                        WHEN EXCLUDED.last_label_raw = 'unknown'
+                            THEN COALESCE(scene_region_status.unsure_since, now())
+                        WHEN EXCLUDED.last_label_raw = scene_region_status.current_state
+                            THEN NULL
+                        ELSE scene_region_status.unsure_since END,
+                    unsure = CASE
+                        WHEN EXCLUDED.last_label_raw = 'unknown'
+                            THEN now() - COALESCE(scene_region_status.unsure_since, now())
+                                 >= make_interval(secs => $4)
+                        WHEN EXCLUDED.last_label_raw = scene_region_status.current_state
+                            THEN false
+                        ELSE scene_region_status.unsure END
                 """,
                 region_id,
                 raw_label,
                 round(distance, 4),
+                _UNSURE_AFTER_S,
             )
 
     async def _status_mark_stale(self, region_id: UUID) -> None:
@@ -864,12 +894,17 @@ class StateEvaluator:
             await conn.execute(
                 """
                 INSERT INTO scene_region_status
-                    (region_id, last_eval_at, last_label_raw, last_distance)
-                VALUES ($1, now(), 'stale', NULL)
+                    (region_id, last_eval_at, last_label_raw, last_distance,
+                     unsure_since)
+                VALUES ($1, now(), 'stale', NULL, now())
                 ON CONFLICT (region_id) DO UPDATE SET
-                    last_label_raw = 'stale'
+                    last_label_raw = 'stale',
+                    unsure_since = COALESCE(scene_region_status.unsure_since, now()),
+                    unsure = now() - COALESCE(scene_region_status.unsure_since, now())
+                        >= make_interval(secs => $2)
                 """,
                 region_id,
+                _UNSURE_AFTER_S,
             )
 
     async def _commit_transition(
@@ -897,7 +932,9 @@ class StateEvaluator:
                     VALUES ($1, $2, now())
                     ON CONFLICT (region_id) DO UPDATE SET
                         current_state = EXCLUDED.current_state,
-                        current_state_since = now()
+                        current_state_since = now(),
+                        unsure_since = NULL,
+                        unsure = false
                     """,
                 region.id,
                 to_state,

@@ -482,9 +482,17 @@
             </div>
             <div class="flex items-center gap-3 text-m">
               <span class="text-baba-text-faint">{t("scene_current_state")}:</span>
-              <span class="font-mono"><Tag>{r.status?.current_state ?? "—"}</Tag></span>
-              {#if r.status?.current_state_since}
-                <span class="text-s text-baba-text-faint">{dt.hms(r.status.current_state_since)}</span>
+              {#if r.status?.unsure}
+                <Tag tone="warn" title={t("scene_unsure_hint")}>{t("scene_unsure")}</Tag>
+                <span class="text-s text-baba-text-faint">
+                  {#if r.status.unsure_since}{dt.hms(r.status.unsure_since)} · {/if}{t("scene_unsure_held")}
+                  <span class="font-mono">{r.status.current_state ?? "—"}</span>
+                </span>
+              {:else}
+                <span class="font-mono"><Tag>{r.status?.current_state ?? "—"}</Tag></span>
+                {#if r.status?.current_state_since}
+                  <span class="text-s text-baba-text-faint">{dt.hms(r.status.current_state_since)}</span>
+                {/if}
               {/if}
             </div>
           </div>

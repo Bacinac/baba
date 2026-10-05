@@ -22,13 +22,17 @@ import asyncio
 import json
 import os
 import sys
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import asyncpg
 import nats
+from baba_core.paths import StoragePaths
 from baba_core.wire import SUBJECT_STATE_CAPTURE
+from baba_state_evaluator.__main__ import verdict
 
-CEST = timezone(timedelta(hours=2))
+LOCAL = ZoneInfo("Europe/Zagreb")
 _PROBE = "__probe__"
 
 
@@ -44,14 +48,16 @@ async def main():
         slug, region_name)
     assert row, f"no region {slug}/{region_name}"
     rid, margin = row["id"], float(row["unknown_margin"])
+    crops = StoragePaths.from_env().layout.scene_crops
     nc = await nats.connect(os.environ.get("BABA_NATS_URL", "nats://nats:4222"),
                             name="probe-region")
     print(f"{slug}/{region_name}  unknown_margin={margin:.2f}")
     for hm in moments:
         day_str, _, hm_str = hm.partition("@")
         y, mo, d = (int(x) for x in day_str.split("-"))
-        h, _, m = hm_str.partition(":")
-        at = datetime(y, mo, d, int(h), int(m or 0), tzinfo=CEST)
+        h, _, ms = hm_str.partition(":")
+        m, _, sec = ms.partition(":")
+        at = datetime(y, mo, d, int(h), int(m or 0), int(sec or 0), tzinfo=LOCAL)
         req = {"region_id": str(rid), "state_label": _PROBE,
                "at": at.astimezone(UTC).isoformat()}
         r = json.loads(
@@ -82,11 +88,11 @@ async def main():
                 "DELETE FROM scene_region_prototypes WHERE id=$1", pid)
             await pool.execute(
                 "UPDATE scene_regions SET updated_at = now() WHERE id=$1", rid)
+            (crops / Path(r["crop_path"]).name).unlink(missing_ok=True)
         per = {s["state_label"]: float(s["d"]) for s in scored}
         best = min(per, key=per.get)
-        verdict = best if per[best] <= margin else "unknown"
         print(f"  {hm}  " + "  ".join(f"{k}={v:.3f}" for k, v in per.items())
-              + f"   -> {verdict}")
+              + f"   -> {verdict(best, per[best], per, margin)}")
     await nc.drain()
     await pool.close()
 

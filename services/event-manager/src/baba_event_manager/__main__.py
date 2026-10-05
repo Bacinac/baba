@@ -458,7 +458,7 @@ class EventManager:
         region's state."""
         rows = await c.fetch(
             """
-            SELECT r.id, r.name, c.slug, s.current_state
+            SELECT r.id, r.name, c.slug, s.published_state
             FROM scene_regions r
             JOIN cameras c ON c.id = r.camera_id
             LEFT JOIN scene_region_status s ON s.region_id = r.id
@@ -469,7 +469,7 @@ class EventManager:
         for r in rows:
             regions[str(r["id"])] = {
                 "slug": r["slug"],
-                "state": r["current_state"],
+                "state": r["published_state"],
             }
         self._scene_regions = regions
         if self._snapshot is None:

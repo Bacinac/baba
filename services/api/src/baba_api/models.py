@@ -519,6 +519,8 @@ class SceneRegionStatus(BaseModel):
     last_eval_at: datetime | None = None
     last_label_raw: str | None = None
     last_distance: float | None = None
+    unsure: bool = False
+    unsure_since: datetime | None = None
 
 
 class SceneRegion(BaseModel):

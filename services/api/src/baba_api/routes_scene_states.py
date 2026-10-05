@@ -67,7 +67,7 @@ _REGION_FIELDS = (
 )
 _STATUS_FIELDS = (
     "region_id, current_state, current_state_since, last_eval_at, "
-    "last_label_raw, last_distance"
+    "last_label_raw, last_distance, unsure, unsure_since"
 )
 _PROTO_FIELDS = "id, region_id, state_label, crop_path, captured_at"
 
@@ -98,6 +98,8 @@ def _to_model(row, status_row, proto_rows) -> SceneRegion:
             last_eval_at=status_row["last_eval_at"],
             last_label_raw=status_row["last_label_raw"],
             last_distance=status_row["last_distance"],
+            unsure=status_row["unsure"],
+            unsure_since=status_row["unsure_since"],
         )
         if status_row is not None
         else None
