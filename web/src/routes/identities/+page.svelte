@@ -6,8 +6,9 @@
     type Feed,
   } from "$lib/api";
   import OpusPeoplePicker from "$lib/OpusPeoplePicker.svelte";
-  import { dialog, plural, Button, Dialog, Picks, Tag, PageActions } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { dialog, plural, Button, Dialog, Heading, Picks, Tag, PageActions } from "$lib/kit";
+  import { t, type MessageKey } from "$lib/i18n";
+  import { identitySections, sectionOfClass, type IdentitySection } from "$lib/identities";
   import { dt } from "$lib/datetime.svelte";
   import { classLabel } from "$lib/classLabels";
 
@@ -112,6 +113,13 @@
   // collapsed section below so daily car / bird sightings don't bury
   // the small handful of named people we actually care about.
   let named   = $derived(identities.filter(i => i.label));
+  let namedSections = $derived(identitySections(named));
+  const SECTION_LABEL: Record<IdentitySection, MessageKey> = {
+    person:  "identities_filter_person",
+    vehicle: "identities_filter_vehicle",
+    pet:     "identities_filter_pet",
+    other:   "identities_add_kind_other",
+  };
   // Groups materialised against the CURRENT anon card set (filters apply):
   // a group renders only when ≥2 of its members are visible; its remaining
   // members render as ordinary singles.
@@ -250,21 +258,9 @@
   });
   let showAnon = $state(false);
 
-  // Map a raw detector class name to one of our top-level filter chip
-  // keys. Mirrors the server-side PET_GROUP / VEHICLE_GROUP grouping
-  // used for re-ID. Classes that don't belong to any group (bicycle,
-  // bird, …) fall through to "all" — clicking those chips drops the
-  // class filter entirely so the operator still gets a useful result.
-  function classChipKeyFor(className: string): string {
-    const c = className.toLowerCase();
-    if (c === "person") return "person";
-    if (c === "car" || c === "truck" || c === "bus" || c === "motorcycle") return "vehicle";
-    if (c === "cat" || c === "dog") return "pet";
-    return "all";
-  }
-
   function focusAnonClass(className: string) {
-    classChip = classChipKeyFor(className);
+    const section = sectionOfClass(className);
+    classChip = section === "other" ? "all" : section;
     showAnon = true;
   }
 
@@ -604,20 +600,19 @@
 {:else if identities.length === 0}
   <p class="text-baba-text-faint">{t("identities_empty")}</p>
 {:else}
-  <!-- Tracked identities: full-size cards, prominent placement. -->
   <section class="mb-8">
-    <h3 class="mb-3 flex items-baseline gap-2 text-m font-semibold text-baba-text">
-      {t("identities_section_tracked")}
-      <span class="text-s font-normal text-baba-text-faint">({named.length})</span>
-    </h3>
     {#if named.length === 0}
+      <Heading label={t("identities_section_tracked")} />
       <p class="text-s text-baba-text-faint">{t("identities_section_tracked_empty")}</p>
     {:else}
-      <ul class="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-        {#each named as id (id.global_id)}
-          {@render card(id, false)}
-        {/each}
-      </ul>
+      {#each namedSections as [section, list] (section)}
+        <Heading label={t(SECTION_LABEL[section])} count={list.length} />
+        <ul class="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
+          {#each list as id (id.global_id)}
+            {@render card(id, false)}
+          {/each}
+        </ul>
+      {/each}
     {/if}
   </section>
 
