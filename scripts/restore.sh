@@ -42,19 +42,33 @@ if [[ -z "$ARCHIVE" ]]; then
 fi
 [[ -f "$ARCHIVE" ]] || die "archive not found: $ARCHIVE"
 docker inspect "$PG_CONTAINER" >/dev/null 2>&1 || die "container $PG_CONTAINER not running"
+[[ "$(docker inspect -f '{{.State.Running}}' "$PG_CONTAINER")" == true ]] \
+    || die "container $PG_CONTAINER is not running — start the project's postgres service first"
+
+compose=(docker compose --project-directory "$SCRIPT_DIR")
+"${compose[@]}" config --quiet || die "the project's Compose configuration is not usable"
+configured_pg=$("${compose[@]}" ps -aq postgres)
+target_pg=$(docker inspect -f '{{.Id}}' "$PG_CONTAINER")
+[[ "$configured_pg" == "$target_pg" ]] \
+    || die "container $PG_CONTAINER is not this Compose project's postgres service"
+[[ "$(docker inspect -f '{{.State.Health.Status}}' "$PG_CONTAINER")" == healthy ]] \
+    || die "container $PG_CONTAINER is not healthy"
 
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/baba-restore.XXXXXX")"
 trap 'rm -rf "$STAGE"' EXIT
 log "extracting …"
 tar -C "$STAGE" -xzf "$ARCHIVE"
 [[ -f "$STAGE/db.dump" ]] || die "archive has no db.dump (corrupt?)"
+[[ -f "$STAGE/manifest.json" ]] || die "archive has no manifest.json"
 
-echo "--- manifest ---"; cat "$STAGE/manifest.json" 2>/dev/null || echo "(no manifest)"; echo "----------------"
+cat "$STAGE/manifest.json"
 
 # Safety: don't restore a DB newer than the code's migrations.
 ARCHIVE_VER=$(sed -n 's/.*"schema_version"[: ]*"\([^"]*\)".*/\1/p' "$STAGE/manifest.json" 2>/dev/null | head -1)
 CODE_VER=$(ls -1 "$SCRIPT_DIR/db/migrations"/*.sql 2>/dev/null | xargs -n1 basename 2>/dev/null | sed 's/\.sql$//' | sort | tail -1)
-if [[ -n "$ARCHIVE_VER" && "$ARCHIVE_VER" != "unknown" && -n "$CODE_VER" ]]; then
+[[ -n "$ARCHIVE_VER" && "$ARCHIVE_VER" != "unknown" && -n "$CODE_VER" ]] \
+    || die "archive or checkout has no known schema version"
+if [[ -n "$ARCHIVE_VER" ]]; then
     # Lexicographic max: if the archive version sorts AFTER the newest local
     # migration, the backup is ahead of this checkout.
     newest=$(printf '%s\n%s\n' "$ARCHIVE_VER" "$CODE_VER" | sort | tail -1)
@@ -62,6 +76,11 @@ if [[ -n "$ARCHIVE_VER" && "$ARCHIVE_VER" != "unknown" && -n "$CODE_VER" ]]; the
         die "archive schema '$ARCHIVE_VER' is NEWER than this checkout's newest migration '$CODE_VER'. Update the code first."
     fi
 fi
+
+log "verifying the complete database archive …"
+docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG_CONTAINER" \
+    pg_restore -f /dev/null < "$STAGE/db.dump" >/dev/null \
+    || die "database archive is not fully readable — no services or data were changed"
 
 if [[ "$ASSUME_YES" != "1" ]]; then
     echo
@@ -71,35 +90,19 @@ if [[ "$ASSUME_YES" != "1" ]]; then
     [[ "$ans" == "restore" ]] || die "aborted"
 fi
 
-# Quiesce the stack so no live service holds DB connections (which block
-# --clean DROPs) or carries stale in-memory state / dead NOTIFY listeners
-# across the swap. Postgres stays up. Best-effort: if compose isn't usable in
-# this context, warn and proceed against the running stack.
-COMPOSE_OK=0
-if ( cd "$SCRIPT_DIR" && docker compose version >/dev/null 2>&1 ); then
-    COMPOSE_OK=1
+mapfile -t app_services < <("${compose[@]}" config --services | sed '/^postgres$/d')
+if (( ${#app_services[@]} )); then
     log "stopping app services for a clean restore (postgres stays up) …"
-    ( cd "$SCRIPT_DIR" && docker compose stop >/dev/null 2>&1 ) || log "compose stop reported issues; continuing"
-    ( cd "$SCRIPT_DIR" && docker compose up -d postgres >/dev/null 2>&1 ) || die "could not (re)start postgres for restore"
-    for _ in $(seq 1 60); do
-        if docker inspect -f '{{.State.Health.Status}}' "$PG_CONTAINER" 2>/dev/null | grep -q healthy; then
-            break
-        fi
-        sleep 1
-    done
-else
-    log "WARNING: 'docker compose' not usable here — restoring into the RUNNING stack. Stop the app services first for a clean restore."
+    "${compose[@]}" stop "${app_services[@]}" \
+        || die "could not stop all app services — database restore was not started"
 fi
 
 log "restoring Postgres ($POSTGRES_DB) …"
-# --exit-on-error: stop at the FIRST real error and return non-zero instead of
-# limping to the end. --if-exists already suppresses the benign "DROP of a
-# not-yet-existing object" noise, so anything that trips --exit-on-error is a
-# genuine failure. Fail loud rather than reporting success on a half-restored DB.
+# Preflight cannot catch target-side SQL errors; keep every DROP and COPY in one transaction.
 if ! docker exec -i -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG_CONTAINER" \
-    pg_restore --clean --if-exists --no-owner --exit-on-error \
+    pg_restore --clean --if-exists --no-owner --exit-on-error --single-transaction \
     -U "$POSTGRES_USER" -d "$POSTGRES_DB" < "$STAGE/db.dump"; then
-    die "pg_restore FAILED (--exit-on-error). The database may be PARTIALLY restored — do NOT bring the stack up. Investigate, then re-run restore."
+    die "pg_restore FAILED (single transaction). App services remain stopped — verify the transaction outcome before restarting them."
 fi
 log "Postgres restore OK"
 
@@ -131,11 +134,7 @@ elif [[ -d "$STAGE/state_api" ]]; then
     log "archive contains state/api but one already exists here — left untouched"
 fi
 
-if [[ "$COMPOSE_OK" == "1" ]]; then
-    log "bringing the stack back up …"
-    ( cd "$SCRIPT_DIR" && docker compose up -d >/dev/null 2>&1 ) \
-        || die "restore succeeded but 'docker compose up -d' failed — start the stack manually"
-    log "done — stack restored and restarted."
-else
-    log "done. Bring the stack up: docker compose up -d"
-fi
+log "bringing the stack back up …"
+"${compose[@]}" up -d \
+    || die "restore succeeded but 'docker compose up -d' failed — start the stack manually"
+log "done — stack restored and restarted."

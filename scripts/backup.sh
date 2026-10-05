@@ -125,8 +125,11 @@ fi
 SCHEMA_VERSION=$(docker exec -e PGPASSWORD="$POSTGRES_PASSWORD" "$PG_CONTAINER" \
     psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tAc \
     "SELECT version FROM schema_versions ORDER BY version DESC LIMIT 1" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
-APP_REV=$(sed -n 's/.*"version"[: ]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/revision.json" 2>/dev/null | head -1)
-APP_REV="${APP_REV:-unknown}"
+APP_REV=unknown
+if [[ -f "$SCRIPT_DIR/revision.json" ]]; then
+    APP_REV=$(sed -n 's/.*"version"[: ]*"\([^"]*\)".*/\1/p' "$SCRIPT_DIR/revision.json" | head -1)
+    APP_REV="${APP_REV:-unknown}"
+fi
 
 cat > "$STAGE/manifest.json" <<EOF
 {

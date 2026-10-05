@@ -202,6 +202,7 @@ run_in "$IMG" "" "/w/tests $IGNORES"
 # home_core is the api's too (argon2, JWT, FastAPI), so its tests run in that image.
 run_in "$AIMG" "" "$API_PATHS /w/core/src/home_core/tests"
 pg_ready
+BABA_TEST_PG_IMAGE="$PG_IMAGE" bash "$ROOT/tests/test_backup_restore.sh"
 run_in "$IMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba" "$PG_PATHS"
 [ -n "$API_PG_PATHS" ] && run_in "$AIMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba" "$API_PG_PATHS"
 # The web server's own modules, under the Node that serves them.

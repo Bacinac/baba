@@ -103,7 +103,7 @@ Both rebuilt services ran without source overlays against disposable PostgreSQL 
 
 ## Remaining lifecycle coverage and documentation — 5 October 2026
 
-The 21 baseline findings and F01–F08 were published in version 1.0.24 (`ecc4e03a`). This publication bundle adds F09–F16, closing the remaining review gaps requested as “nastavi sa svim”: **all 37 corrections are implemented and locally verified**. The running revision and rollout status are reported by `/version` and `deploy/deploy.sh --status`.
+The 21 baseline findings and F01–F08 were published in version 1.0.24 (`ecc4e03a`). F09–F16 were subsequently published in version 1.0.25 (`6f606056`): **all 37 source-review corrections are deployed**. The running revision and rollout status are reported by `/version` and `deploy/deploy.sh --status`.
 
 Final continuation checks: **69 targeted Python cases** across the four changed test files, including real PostgreSQL concurrency; **29 frontend concurrency cases** and Svelte zero errors/warnings. Fresh CPU base and all nine changed service images were built. API and event-manager exchanged real NATS observations and authenticated HTTP event responses, restarted, and closed cleanly. Ingestor, recorder and doorbell started and restarted their real supervisors against isolated PostgreSQL/NATS with no enabled cameras. Baked detector-rule, tracker-settings/zone, scene and embedder owners each started and stopped twice; scene/embedding model objects were substituted in those lifecycle checks. No source-package overlays were used. All disposable runtime containers and networks were removed.
 
@@ -172,6 +172,22 @@ The production web image was also rebuilt, served its compiled application throu
 **Correction:** The canonical provider guard disables runtime fallback after checking the bound provider, covering both the small-model session factory and ONNX Runtime detector backend.
 
 **Verification:** A regression invokes the installed SDK's actual execution method with an injected provider failure and proves that the exception escapes without rebinding. A separate isolated NVIDIA model run confirms successful CUDA execution with fallback disabled; its input dimensions come from loaded model metadata.
+
+## Operational recovery acceptance — 5 October 2026
+
+The next roadmap step exercises populated-database recovery through the canonical backup and restore scripts. It uncovered F17 below, which is included in this recovery publication: **38 corrections implemented and verified**. The previous 37 corrections were published in 1.0.25; this change adds the transactional restore and its required regression gate.
+
+### P1 F17 Restore modifies the database before detecting an unreadable dump
+
+**Evidence:** [The former restore script](../scripts/restore.sh) extracted the outer archive and checked its declared migration version, then stopped services and ran a nontransactional `pg_restore --clean`. An inner dump truncated halfway through its data still passed `pg_restore --list`. Restore dropped and recreated objects before detecting EOF. In the isolated reproduction, both identity labels and recording rows fell from their populated counts to zero, and the app service remained stopped.
+
+**Correction:** Restore checks that the configured, healthy PostgreSQL container belongs to the selected Compose project. It reads and decompresses the entire dump before stopping services or altering data. App services must stop successfully; PostgreSQL remains running. Every database DROP, COPY and CREATE executes in one transaction. Restore failure leaves app services stopped and reports the transaction outcome as requiring verification. The former branch that proceeded after Compose or service-stop failure is removed. A manifest with a known migration version is required.
+
+**Regression checks:** [The container integration test](../tests/test_backup_restore.sh), included in the required push gate, uses PostgreSQL 18 and a populated relational fixture. It verifies that an unreadable dump leaves table contents, constraints and service uptime unchanged; another Compose project or an unknown schema is rejected; an injected service-stop failure prevents database restore; a target-side dependency error rolls back database changes and leaves the app stopped; and valid recovery restores data, media and the protected secret file. PostgreSQL is not restarted during these operations. The exported-commit gate also exposed an unintended backup abort when the optional runtime revision stamp is absent; backup now records the intended `unknown` revision and still requires a fully readable dump.
+
+**Populated acceptance:** A read-only copy of an existing production checkpoint was restored into an isolated PostgreSQL 18 container, then passed through the canonical backup and corrected restore scripts. Before and after fingerprints match across **38 tables and 1,266,031 rows**, **653 media files**, and **two encrypted provider settings**. The existing API image started and served authenticated HTTP reads for seven cameras, all 13 named identities and both decrypted, masked settings. All **465 durable database references** to reference photos and scene crops resolve to files after restore.
+
+The containers use an internal network with no published ports. Camera connections are disabled only in the disposable database before API startup. API checks use the explicit CPU variant for metadata and authorization, with model loading unconfigured; they do not exercise the restored camera feeds or GPU models. This verifies populated data, media, secrets and API recovery. It does not establish fresh-host model provisioning, hardware throughput, disk-failure handling or archive consistency during simultaneous production writes. Production code, configuration and data were not changed by this exercise.
 
 ## Review baseline
 
