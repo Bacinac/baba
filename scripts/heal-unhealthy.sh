@@ -41,9 +41,9 @@ log() { logger -t baba-healwatch "$*"; }
 # blinds (recording keeps working — the worst failure mode). docker 29.4.x
 # drops the `o: mode=1777` volume option when the tmpfs REMOUNTS after its
 # last consumer stops (size= survives, mode= is lost → root:755), so any full
-# stack recreate or daemon restart can reintroduce it. The compose `shm-init`
+# stack recreate or daemon restart can reintroduce it. The compose `storage-init`
 # one-shot normalizes the mode on every `up`; this guard catches the paths
-# where shm-init doesn't run (daemon restart auto-restarting the stack).
+# where storage-init doesn't run (daemon restart auto-restarting the stack).
 # Fixed upstream in docker 29.6.x — harmless no-op there.
 shm_mp=$(docker volume inspect baba_baba-shm -f '{{.Mountpoint}}' 2>/dev/null || true)
 if [ -n "$shm_mp" ] && mountpoint -q "$shm_mp" 2>/dev/null; then

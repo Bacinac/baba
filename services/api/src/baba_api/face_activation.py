@@ -18,6 +18,8 @@ log = logging.getLogger("baba.api")
 
 
 class ApiFaceActivation:
+    _RETRY_INTERVAL_S = 5.0
+
     def __init__(self, app: FastAPI, pool: asyncpg.Pool, dsn: str) -> None:
         self._app = app
         self._pool = pool
@@ -25,6 +27,7 @@ class ApiFaceActivation:
         self._requested = asyncio.Event()
         self._task: asyncio.Task | None = None
         self._stopping = False
+        self._retry_needed = False
         self._listener = ResilientListener(
             dsn,
             ["face_recognition_changed"],
@@ -52,7 +55,11 @@ class ApiFaceActivation:
 
     async def _run(self) -> None:
         while True:
-            await self._requested.wait()
+            if self._retry_needed:
+                with suppress(TimeoutError):
+                    await asyncio.wait_for(self._requested.wait(), self._RETRY_INTERVAL_S)
+            else:
+                await self._requested.wait()
             self._requested.clear()
             try:
                 await self.refresh()
@@ -85,11 +92,13 @@ class ApiFaceActivation:
                     state.face_loaded_pair = pair
                 state.face_stack_error = None
             except Exception as exc:
+                self._retry_needed = bool(path)
                 self._disable(str(exc))
                 if path:
                     log.exception("api face activation failed")
                 accepted = await acknowledge_face_selection(self._pool, "api", selection, str(exc))
             else:
+                self._retry_needed = False
                 accepted = await acknowledge_face_selection(self._pool, "api", selection)
             if not accepted:
                 self.request()

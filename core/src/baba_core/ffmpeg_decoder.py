@@ -240,6 +240,7 @@ class FFmpegSubprocessDecoder(VideoDecoder):
         frame_bytes = self._frame_bytes
         t0_ns = self._t0_ns
 
+        frame_deadline = time.monotonic() + 60.0
         while not stop.is_set():
             if proc.returncode is not None:
                 # ffmpeg exited (EOF, RTSP timeout, decode error). Let the
@@ -251,9 +252,13 @@ class FFmpegSubprocessDecoder(VideoDecoder):
                 # leaking the task. 5s is well over the worst-case frame interval.
                 buf = await asyncio.wait_for(
                     proc.stdout.readexactly(frame_bytes),
-                    timeout=5.0,
+                    timeout=min(5.0, max(0.001, frame_deadline - time.monotonic())),
                 )
             except TimeoutError:
+                if stop.is_set():
+                    return
+                if time.monotonic() >= frame_deadline:
+                    raise RuntimeError("FFmpeg stopped producing decoded frames") from None
                 continue
             except asyncio.IncompleteReadError:
                 # ffmpeg closed stdout — EOF or process died.
@@ -264,6 +269,7 @@ class FFmpegSubprocessDecoder(VideoDecoder):
             # can hold the array without racing the next read.
             # NV12 is (H + H/2, W) uint8 flat; Y plane first, UV second.
             self._decoding = True
+            frame_deadline = time.monotonic() + 10.0
             array = np.frombuffer(buf, dtype=np.uint8).reshape(out_h + out_h // 2, out_w).copy()
             pts_ns = time.monotonic_ns() - t0_ns
             yield array, pts_ns

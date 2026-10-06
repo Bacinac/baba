@@ -4,7 +4,9 @@ first frame is frames being lost, and stays loud."""
 
 import asyncio
 import logging
+from types import SimpleNamespace
 
+import baba_core.ffmpeg_decoder as decoder_module
 import pytest
 from baba_core.ffmpeg_decoder import FFmpegSubprocessDecoder
 
@@ -54,3 +56,39 @@ def test_a_missing_reference_is_the_join_until_the_first_frame(caplog, join):
 @pytest.mark.parametrize("join", JOINS)
 def test_after_the_first_frame_a_missing_reference_is_frames_lost(caplog, join):
     assert _levels(caplog, join, decoding=True) == [logging.WARNING, logging.WARNING]
+
+
+@pytest.mark.parametrize("first_frame", [False, True])
+def test_a_live_process_with_no_decoded_frames_requests_reconnect(monkeypatch, first_frame):
+    async def exercise():
+        clock = SimpleNamespace(now=0.0)
+        monkeypatch.setattr(decoder_module, "time", SimpleNamespace(
+            monotonic=lambda: clock.now, monotonic_ns=lambda: 0,
+        ))
+
+        class Reader:
+            sent = False
+
+            async def readexactly(self, _size):
+                if first_frame and not self.sent:
+                    self.sent = True
+                    return b"\x00" * 6
+                await asyncio.sleep(0)
+                clock.now += 120.0
+                raise TimeoutError
+
+        decoder = _Decoder()
+        decoder._proc = SimpleNamespace(returncode=None, stdout=Reader())
+        decoder._config = object()
+        decoder._out_w = decoder._out_h = 2
+        decoder._frame_bytes = 6
+        decoder._t0_ns = 0
+        frames = decoder.frames(asyncio.Event())
+        async with asyncio.timeout(0.2):
+            if first_frame:
+                array, _pts = await anext(frames)
+                assert array.shape == (3, 2)
+            with pytest.raises(RuntimeError, match="stopped producing decoded frames"):
+                await anext(frames)
+
+    asyncio.run(exercise())

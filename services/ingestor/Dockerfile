@@ -15,6 +15,8 @@ ARG FFMPEG_VERSION=8.1.3
 ARG FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
 ARG NVCH_VERSION=n13.1.15.0
 ARG NVCH_SHA256=2255bc74d038b95aa4be30f5f66322c2176acbdb90ada1851db6993536fbeaf7
+ARG LLVM_VERSION=23.1.2
+ARG LLVM_SHA256=6382de1c1a210ce5a5cc49d18bc8444d137742e7cbf9b19f4ae602bb1ab52534
 
 # ubuntu:24.04 ships no CA bundle, so its apt cannot reach the HTTPS archive
 # that would carry ca-certificates to it. Lend it one; the cpu stage's image
@@ -67,10 +69,13 @@ CMD ["python", "-m", "baba_ingestor"]
 
 
 # --- nvidia (NVDEC) ---------------------------------------------------------
-# Compile ffmpeg with CUDA NVDEC/NVENC support; decoder-ffmpeg-nvdec runs it
+# Compile ffmpeg with CUDA NVDEC support; decoder-ffmpeg-nvdec runs it
 # as a subprocess. Distro ffmpeg builds carry no CUDA.
 
-FROM nvidia/cuda:13.4.1-devel-ubuntu24.04 AS nvidia-ffmpeg-builder
+# LLVM 23 supports CUDA through 13.2; the runtime stays on CUDA 13.4.
+FROM nvidia/cuda:13.2.1-devel-ubuntu24.04 AS nvidia-ffmpeg-builder
+ARG LLVM_VERSION
+ARG LLVM_SHA256
 ARG FFMPEG_VERSION
 ARG FFMPEG_SHA256
 ARG NVCH_VERSION
@@ -84,10 +89,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 COPY docker/apt-sources.sh /usr/local/bin/apt-sources
 RUN apt-sources && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    clang \
     ccache \
     curl \
     xz-utils \
+    zstd \
     pkg-config \
     yasm \
     nasm \
@@ -95,7 +100,18 @@ RUN apt-sources && apt-get update && apt-get install -y --no-install-recommends 
     autoconf \
     automake \
     ca-certificates \
+    libedit2 \
+    libxml2 \
+    libzstd1 \
  && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/llvm.tar.zst \
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/LLVM-${LLVM_VERSION}-Linux-X64.tar.zst" \
+ && echo "${LLVM_SHA256}  /tmp/llvm.tar.zst" | sha256sum -c - \
+ && mkdir /opt/llvm \
+ && tar --use-compress-program="zstd --long=30" -xf /tmp/llvm.tar.zst -C /opt/llvm --strip-components=1 \
+ && rm /tmp/llvm.tar.zst
+ENV PATH="/opt/llvm/bin:$PATH"
 
 # Headers that wire ffmpeg's avcodec into NVIDIA's NVDEC/NVENC ABI. Pin the
 # tag so an upstream rename doesn't break our build silently.
@@ -133,9 +149,19 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
         --cxx="ccache g++" \
         --enable-shared \
         --disable-static \
+        --disable-everything \
+        --enable-network \
+        --enable-protocol=file,tcp,udp,rtp,pipe \
+        --enable-demuxer=rtsp,rtp,sdp \
+        --enable-parser=h264,hevc,av1,vp8,vp9,mpegvideo,mpeg4video \
+        --enable-decoder=h264,hevc,av1,vp8,vp9,mpeg2video,mpeg4,h264_cuvid,hevc_cuvid,av1_cuvid,vp8_cuvid,vp9_cuvid,mpeg2_cuvid,mpeg4_cuvid \
+        --enable-hwaccel=h264_nvdec,hevc_nvdec,av1_nvdec,vp8_nvdec,vp9_nvdec,mpeg2_nvdec,mpeg4_nvdec \
+        --enable-filter=fps,scale_cuda,hwdownload,format \
+        --enable-encoder=rawvideo \
+        --enable-muxer=rawvideo \
+        --enable-bsf=h264_mp4toannexb,hevc_mp4toannexb,extract_extradata \
         --enable-cuda-llvm \
         --enable-cuvid \
-        --enable-nvenc \
         --enable-nvdec \
         --extra-cflags=-I/usr/local/cuda/include \
         --extra-ldflags=-L/usr/local/cuda/lib64 \

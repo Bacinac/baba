@@ -625,34 +625,9 @@ execute_install() {
         exit 0
     fi
 
-    # Make sure host paths exist before docker tries to bind-mount them, and
-    # that the non-root service containers (uid BABA_UID, baked as 1000 in the
-    # images) can actually write their tiers. This MUST happen before the first
-    # `docker compose up`: if a nested bind-mount subpath like $STATE/api does
-    # not exist yet, dockerd auto-creates it as root:root, and the api (uid
-    # 1000) then can't write its JWT signing key → auth is dead. Same for the
-    # models cache (detector) and media tier (recorder/embedder/event-manager).
-    # postgres (uid 999) self-manages its own subdir, so we leave it alone.
     BABA_UID="${BABA_UID:-1000}"
     BABA_GID="${BABA_GID:-1000}"
     export BABA_UID BABA_GID
-    c_step "Ensuring host paths exist and are writable by uid ${BABA_UID}…"
-    mkdir -p "$BABA_MODELS_HOST" "$BABA_MODELS_HOST/cache/openvino" "$BABA_MEDIA_HOST" \
-             "$BABA_STATE_HOST" "$BABA_STATE_HOST/api"
-    # Non-recursive on the tiers themselves (services create their own subdirs
-    # as uid 1000 at runtime); the media tree may be huge so a -R would be a
-    # needless multi-TB walk. state/api is pre-created above so it lands owned
-    # by the runtime uid instead of root.
-    if ! chown -R "$BABA_UID:$BABA_GID" "$BABA_MODELS_HOST/cache" 2>/dev/null; then
-        c_warn "  Could not chown $BABA_MODELS_HOST/cache — OpenVINO/TRT will compile without a disk cache (slower first load)."
-    fi
-    if ! chown "$BABA_UID:$BABA_GID" \
-            "$BABA_MODELS_HOST" "$BABA_MEDIA_HOST" "$BABA_STATE_HOST/api" 2>/dev/null; then
-        c_warn "  Could not chown storage tiers to ${BABA_UID}:${BABA_GID} — re-run install.sh with sudo, or chown manually, or the uid-1000 services can't write."
-    fi
-    c_ok "  $BABA_MODELS_HOST"
-    c_ok "  $BABA_STATE_HOST"
-    c_ok "  $BABA_MEDIA_HOST"
 
     # Export every var the envgen template references, so envgen_write's
     # parameter expansion picks them up. Local-scope assignments in the
@@ -736,6 +711,9 @@ execute_install() {
         fi
     fi
 
+    if [[ "$MODELS_TIER" != "skip" ]]; then
+        compose_download_models "$MODELS_TIER" "$BABA_VARIANT" "$BABA_DETECTOR_DOWNLOAD"
+    fi
     compose_up
     compose_wait_api_healthy 180  # generous — postgres initdb + migrations + model loads
 
@@ -751,12 +729,6 @@ execute_install() {
     # Optional scheduled DR backup (opt-in via BABA_BACKUP_SCHEDULE).
     configure_backup_timer
 
-    # Model download is post-up so the operator can see the api come
-    # alive first (faster feedback). The download container reads
-    # BABA_MODELS_HOST from .env so it doesn't need extra args.
-    if [[ "$MODELS_TIER" != "skip" ]]; then
-        compose_download_models "$MODELS_TIER" "$BABA_VARIANT" "$BABA_DETECTOR_DOWNLOAD"
-    fi
 }
 
 # Optional cgroup resource governance for the baba.slice parent (every BABA
@@ -783,7 +755,7 @@ configure_resource_limits() {
         return 0
     fi
     # Needs root + the slice to already exist (compose up created it above).
-    if sudo systemctl set-property baba.slice "${props[@]}" 2>/dev/null; then
+    if as_root systemctl set-property baba.slice "${props[@]}" 2>/dev/null; then
         c_ok "  ${props[*]}"
     else
         c_warn "  Could not apply (needs sudo + docker's systemd cgroup driver). Set manually:"
@@ -811,8 +783,8 @@ BABA_ROOT_LIBDIR=/usr/local/lib/baba
 install_root_script() {
     # $1 = path to the source script in the checkout. Echoes the installed path.
     local src="$1" dest="$BABA_ROOT_LIBDIR/$(basename "$1")"
-    sudo install -d -m 0755 -o root -g root "$BABA_ROOT_LIBDIR"
-    sudo install -m 0755 -o root -g root "$src" "$dest"
+    as_root install -d -m 0755 -o root -g root "$BABA_ROOT_LIBDIR"
+    as_root install -m 0755 -o root -g root "$src" "$dest"
     printf '%s\n' "$dest"
 }
 
@@ -825,7 +797,7 @@ configure_health_watchdog() {
     c_step "Installing baba-healwatch self-healing timer…"
     local heal_bin
     heal_bin=$(install_root_script "$SCRIPT_DIR/scripts/heal-unhealthy.sh")
-    if ! sudo tee /etc/systemd/system/baba-healwatch.service >/dev/null <<EOF
+    if ! as_root tee /etc/systemd/system/baba-healwatch.service >/dev/null <<EOF
 [Unit]
 Description=BABA unhealthy-container watchdog (restarts hard-hung services)
 After=docker.service
@@ -839,7 +811,7 @@ EOF
         c_warn "  Could not write systemd unit (needs sudo) — skipping watchdog."
         return 0
     fi
-    sudo tee /etc/systemd/system/baba-healwatch.timer >/dev/null <<'EOF'
+    as_root tee /etc/systemd/system/baba-healwatch.timer >/dev/null <<'EOF'
 [Unit]
 Description=Run the BABA health watchdog every minute
 
@@ -851,8 +823,8 @@ AccuracySec=10s
 [Install]
 WantedBy=timers.target
 EOF
-    sudo systemctl daemon-reload 2>/dev/null
-    if sudo systemctl enable --now baba-healwatch.timer 2>/dev/null; then
+    as_root systemctl daemon-reload 2>/dev/null
+    if as_root systemctl enable --now baba-healwatch.timer 2>/dev/null; then
         c_ok "  baba-healwatch.timer active (restarts unhealthy baba-* containers)"
     else
         c_warn "  Could not enable timer — run: sudo systemctl enable --now baba-healwatch.timer"
@@ -871,7 +843,7 @@ configure_backup_timer() {
     c_step "Installing baba-backup timer (schedule: $sched)…"
     local backup_bin
     backup_bin=$(install_root_script "$SCRIPT_DIR/scripts/backup.sh")
-    if ! sudo tee /etc/systemd/system/baba-backup.service >/dev/null <<EOF
+    if ! as_root tee /etc/systemd/system/baba-backup.service >/dev/null <<EOF
 [Unit]
 Description=BABA disaster-recovery backup (pg_dump + irreplaceable media)
 After=docker.service
@@ -886,7 +858,7 @@ EOF
         c_warn "  Could not write systemd unit (needs sudo) — skipping backup timer."
         return 0
     fi
-    sudo tee /etc/systemd/system/baba-backup.timer >/dev/null <<EOF
+    as_root tee /etc/systemd/system/baba-backup.timer >/dev/null <<EOF
 [Unit]
 Description=Run the BABA DR backup on schedule
 
@@ -898,8 +870,8 @@ AccuracySec=1min
 [Install]
 WantedBy=timers.target
 EOF
-    sudo systemctl daemon-reload 2>/dev/null
-    if sudo systemctl enable --now baba-backup.timer 2>/dev/null; then
+    as_root systemctl daemon-reload 2>/dev/null
+    if as_root systemctl enable --now baba-backup.timer 2>/dev/null; then
         c_ok "  baba-backup.timer active ($sched)"
     else
         c_warn "  Could not enable timer — run: sudo systemctl enable --now baba-backup.timer"
@@ -1014,11 +986,14 @@ if (( UPGRADE_MODE == 1 )); then
         *)      COMPOSE_FILE="docker-compose.yml" ;;
     esac
     export COMPOSE_FILE
-    compose_up
-    compose_wait_api_healthy 180
     if [[ "$MODELS_TIER" != "skip" ]]; then
         compose_download_models "$MODELS_TIER" "$BABA_VARIANT"
     fi
+    compose_up
+    compose_wait_api_healthy 180
+    configure_resource_limits
+    configure_health_watchdog
+    configure_backup_timer
     print_success
     exit 0
 fi

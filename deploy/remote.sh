@@ -182,10 +182,6 @@ docker compose down --remove-orphans
 case ",$FLAGS," in
   *,recreate_shm,*) docker volume rm -f baba_baba-shm >/dev/null 2>&1 || true ;;
 esac
-# The service containers run as uid 1000; a root-owned tier means no JWT key,
-# no compiled-model cache, no recordings.
-chown -R 1000:1000 state logs models/cache 2>/dev/null || true
-
 # A first deploy has nothing to be stale about, and compose bind-mounts this
 # path: were it still missing at `up`, Docker would create a DIRECTORY there and
 # the api would serve the dev stub forever.
@@ -227,7 +223,7 @@ docker compose up -d --remove-orphans || echo "compose up failed — the health 
 # anything because every service is `restart: unless-stopped` and a crash-looper
 # shows as 'Restarting' — an unstated invariant the guard depended on.
 #
-# `Exited (0)` is deliberately allowed: shm-init is a one-shot that chmods the
+# `Exited (0)` is deliberately allowed: storage-init is a one-shot that prepares the
 # frame ring and is SUPPOSED to exit clean, so a bare 'Exited' match would fail
 # every deploy. A non-zero code is the actual failure, hence the digit class.
 health_bad() {

@@ -243,14 +243,11 @@ def main() -> int:
     # bucket unless --no-face explicitly excludes the face stack.
     specs: list[ModelSpec] = []
     if args.minimal:
-        # The GPU-tier detector install.sh chose (--detector), plus the shared
-        # body/face/reid/sam defaults. Falls back to rtdetrv2-r18 if the name
-        # isn't known so a typo can't leave the install with no detector.
+        # The selected detector and the shared body/face/reid/sam defaults.
         want = f"{args.detector}.onnx"
         det = next((s for s in (DETECTORS + RFDETR_MODELS) if s.target_name == want), None)
         if det is None:
-            log.warning("unknown --detector %r; falling back to rtdetrv2-r18", args.detector)
-            det = next(s for s in DETECTORS if s.target_name == "rtdetrv2-r18.onnx")
+            parser.error(f"unknown detector {args.detector!r}; provide a supported zoo name")
         specs.append(det)
         specs.extend(s for s in EMBEDDERS if s.target_name == "dinov2-vits14.onnx")
         specs.extend(REID_MODELS)  # osnet — hard-required by tracker + embedder

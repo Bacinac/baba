@@ -135,6 +135,6 @@ elif [[ -d "$STAGE/state_api" ]]; then
 fi
 
 log "bringing the stack back up …"
-"${compose[@]}" up -d \
+"${compose[@]}" up -d --remove-orphans \
     || die "restore succeeded but 'docker compose up -d' failed — start the stack manually"
 log "done — stack restored and restarted."

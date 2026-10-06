@@ -570,6 +570,8 @@ services:
       # re-read per request so a push updates /version without an api rebuild.
       - ./revision.json:/app/revision.json:ro
     depends_on:
+      storage-init:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       nats:
@@ -753,23 +755,24 @@ services:
       <<: *baba-healthcheck
       start_period: 20s
 
-  # One-shot mode guard for the shared frame-ring volume. The `o: mode=1777`
-  # driver option is not reliably re-applied when the tmpfs REMOUNTS after its
-  # last consumer stops (docker 29.4.x drops mode= while keeping size=; fixed
-  # in 29.6.x) — the volume comes back root:0755 and the non-root ingestor
-  # can't create /baba_cam_* segments: the whole detection pipeline silently
-  # blinds while live+recording keep working. Normalizing the mode as root
-  # before the ingestor starts makes every `compose up` deterministic on any
-  # engine version. scripts/heal-unhealthy.sh carries the same guard for the
-  # daemon-restart path where this one-shot doesn't re-run.
-  shm-init:
+  # Docker creates missing bind directories as root, including nested cache
+  # mounts. PostgreSQL manages its own ownership separately.
+  storage-init:
     image: busybox:1.37
-    container_name: baba-shm-init
+    container_name: baba-storage-init
     user: "0:0"
-    command: ["chmod", "1777", "/dev/shm"]
+    environment:
+      BABA_UID: ${BABA_UID:-1000}
+      BABA_GID: ${BABA_GID:-1000}
+    command: ["sh", "/init-storage.sh"]
     restart: "no"
     volumes:
       - baba-shm:/dev/shm
+      - ./scripts/init-storage.sh:/init-storage.sh:ro
+      - ${BABA_MODELS_HOST}:/models
+      - ${BABA_MODELS_HOST}/cache:/models/cache
+      - ${BABA_STATE_HOST}/api:/state
+      - ${BABA_MEDIA_HOST}:/media
 
   # Ingestor supervisor: single container, reads `cameras` from Postgres and
   # spawns one ffmpeg worker per enabled row. React to NOTIFY 'cameras_changed'
@@ -835,9 +838,7 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
-      shm-init:
-        # The frame-ring volume must be world-writable BEFORE the (non-root)
-        # ingestor tries to create its first segment — see shm-init.
+      storage-init:
         condition: service_completed_successfully
     restart: unless-stopped
     healthcheck:

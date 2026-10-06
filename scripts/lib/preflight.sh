@@ -1,4 +1,11 @@
 # shellcheck shell=bash
+as_root() {
+    if (( EUID == 0 )); then
+        "$@"
+    else
+        sudo "$@"
+    fi
+}
 # Sanity checks the host must pass before install can do anything
 # useful. Fails fast with a clear message on each missing piece —
 # better to halt at "install docker first" than to discover it three

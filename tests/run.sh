@@ -91,6 +91,7 @@ API_PG_TESTS="test_face_model_space.py test_reference_photo_enrolment.py test_fa
 IMG=$(local_image event-manager 'intel|nvidia|cpu') || exit 1
 TIMG=$(local_image tracker 'intel|nvidia|cpu') || exit 1
 AIMG=$(local_image api 'intel|nvidia|cpu') || exit 1
+RIMG=$(local_image recorder 'intel|nvidia|cpu') || exit 1
 # The web runs against the tree its lockfile names, not whatever web image was
 # built last: the Dockerfile's deps stage IS that tree, and the layer cache
 # rebuilds it only when package.json or the lock changes.
@@ -139,6 +140,8 @@ docker run --rm --entrypoint sh -v "$ROOT:/w:ro" -e UV_CACHE_DIR=/tmp/uv-cache "
     || { echo "tests/run.sh: baba_core imports a package baba-core does not declare" >&2; exit 1; }
 
 PYPATH=/w/core/src:/w/backends/onnxruntime/src:/w/services/event-manager/src:/w/services/tracker/src:/w/services/api/src:/w/services/state-evaluator/src:/w/services/embedder/src:/w/services/recorder/src:/w/services/ingestor/src:/w/services/detector/src
+
+bash "$ROOT/tests/test_storage_init.sh"
 
 for c in $(docker ps -aq --filter name=baba-test-pg-); do
     n=$(docker inspect -f '{{.Name}}' "$c"); [ -d "/proc/${n##*-}" ] || docker rm -f "$c" >/dev/null
@@ -203,6 +206,7 @@ run_in "$IMG" "" "/w/tests $IGNORES"
 run_in "$AIMG" "" "$API_PATHS /w/core/src/home_core/tests"
 pg_ready
 BABA_TEST_PG_IMAGE="$PG_IMAGE" bash "$ROOT/tests/test_backup_restore.sh"
+BABA_STORAGE_TEST_IMAGE="$RIMG" BABA_TEST_PG_IMAGE="$PG_IMAGE" bash "$ROOT/tests/test_recorder_storage.sh"
 run_in "$IMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba" "$PG_PATHS"
 [ -n "$API_PG_PATHS" ] && run_in "$AIMG" "--network $NET -e BABA_TEST_DSN=postgresql://baba:test@$PGC/baba" "$API_PG_PATHS"
 # The web server's own modules, under the Node that serves them.

@@ -53,9 +53,9 @@ compose_up() {
     done
     c_step "Starting stack…"
     if (( ${#args[@]} > 0 )); then
-        docker compose "${args[@]}" up -d
+        docker compose "${args[@]}" up -d --remove-orphans
     else
-        docker compose up -d
+        docker compose up -d --remove-orphans
     fi
     c_ok "Stack started"
 }
@@ -109,6 +109,11 @@ compose_download_models() {
     local tier="${1:-minimal}"   # minimal|full|skip
     local variant="${2:-}"       # nvidia|intel|cpu|empty
     local detector="${3:-}"      # GPU-tier detector basename (rf-detr-nano|d-fine-s|…)
+    if [[ -z "$detector" && -n "${BABA_DETECTOR_MODEL:-}" ]]; then
+        detector="${BABA_DETECTOR_MODEL##*/}"
+        detector="${detector%.onnx}"
+        detector="${detector%.nv12}"
+    fi
     local -a extra=()
     if [[ -n "$variant" && "$variant" != "cpu" ]]; then
         extra+=(--bake-nv12)

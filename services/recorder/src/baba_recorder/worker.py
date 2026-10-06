@@ -115,7 +115,6 @@ class CameraRecorder:
 
     async def _run(self) -> None:
         out_dir = MediaLayout(self._config.media_path).camera_segments(self._spec.slug)
-        out_dir.mkdir(parents=True, exist_ok=True)
         log.info(
             "recorder starting: camera=%s rtsp=%s segment=%ds out=%s",
             self._spec.slug,
@@ -127,6 +126,7 @@ class CameraRecorder:
         backoff = 1.0
         while not self._stop.is_set():
             try:
+                await asyncio.to_thread(out_dir.mkdir, parents=True, exist_ok=True)
                 await self._record_session(out_dir)
                 # ffmpeg exited cleanly — unusual but treat as restart.
                 log.info("ffmpeg exited cleanly for %s, restarting", self._spec.slug)
@@ -311,18 +311,61 @@ class CameraRecorder:
                 except TimeoutError:
                     proc.kill()
                     await proc.wait()
+        finally:
+            if proc.returncode is None:
+                proc.terminate()
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=10)
+                except TimeoutError:
+                    proc.kill()
+                    await proc.wait()
             for t in (wait_proc, wait_stop):
                 if not t.done():
                     t.cancel()
-        finally:
             indexer.cancel()
-            stderr_fwd.cancel()
             for t in (indexer, stderr_fwd):
                 with contextlib.suppress(asyncio.CancelledError):
                     await t
 
+            if proc.returncode != 0:
+                await self._discard_failed_tail(out_dir)
             # One final index pass so the last closed segment lands in DB.
             await self._index_once(out_dir, also_close_pending=True)
+
+        if proc.returncode != 0 and not self._stop.is_set():
+            raise RuntimeError(f"recording writer exited with status {proc.returncode}")
+
+    async def _discard_failed_tail(self, out_dir: Path) -> None:
+        scan = await asyncio.to_thread(_scan_segment_dir, out_dir)
+        if not scan or self._session_started_at is None:
+            return
+        path, started, _mtime, size = scan[-1]
+        if started < self._session_started_at.replace(microsecond=0):
+            return
+        if size:
+            proc = await asyncio.create_subprocess_exec(
+                "ffprobe", "-v", "error", "-show_entries", "format=duration",
+                "-of", "csv=p=0", str(path),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            try:
+                _stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
+            except BaseException:
+                if proc.returncode is None:
+                    proc.kill()
+                await proc.wait()
+                raise
+            if proc.returncode == 0:
+                return
+            diagnostic = stderr.decode(errors="replace").strip()
+            if not any(reason in diagnostic for reason in (
+                "moov atom not found", "Invalid data found when processing input",
+            )):
+                raise RuntimeError(f"failed recording tail validation failed: {diagnostic}")
+        await asyncio.to_thread(path.unlink, missing_ok=True)
+        rel = MediaLayout.rel_camera_segments(self._spec.slug) + path.name
+        await self._pool.execute("DELETE FROM recordings WHERE path = $1", rel)
+        log.error("discarded unreadable recording segment after writer failure: %s", path)
 
     async def _forward_stderr(self, proc: asyncio.subprocess.Process) -> None:
         assert proc.stderr is not None
@@ -431,6 +474,10 @@ class CameraRecorder:
         for i in indices_to_process:
             path, started_at = starts[i]
             is_open = i == last_idx and not also_close_pending
+            if starts_size[i] == 0:
+                if not is_open:
+                    log.warning("ignoring empty recording segment: %s", path)
+                continue
             if is_open:
                 # ffmpeg is still writing — leave ended_at/duration/size
                 # untouched on conflict, but insert with NULLs for new rows.

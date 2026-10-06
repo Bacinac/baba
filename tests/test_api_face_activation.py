@@ -75,6 +75,26 @@ def test_threshold_revision_reuses_loaded_models_and_waits_for_embedder(pg, monk
     run(pg, monkeypatch, body, factory)
 
 
+def test_models_arriving_after_startup_activate_without_a_notification(pg, monkeypatch):
+    available = threading.Event()
+    monkeypatch.setattr(activation.ApiFaceActivation, "_RETRY_INTERVAL_S", .02)
+
+    def factory(**kw):
+        return (object() if available.is_set() else None), kw["detector_key"], kw["model_key"]
+
+    async def body(worker, state, pool):
+        selected = await read_face_selection(pool)
+        await wait_for_ack(pool, selected.revision, failed=True)
+        assert state.face_stack is None
+        await acknowledge_face_selection(pool, "embedder", selected)
+        available.set()
+        await wait_for_ack(pool, selected.revision)
+        assert state.face_stack is not None and state.face_stack_error is None
+        assert await pool.fetchval("SELECT active_revision FROM face_recognition_settings") == selected.revision
+
+    run(pg, monkeypatch, body, factory)
+
+
 def test_notifications_coalesce_and_superseded_loads_cannot_activate(pg, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     loads = []

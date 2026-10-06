@@ -51,6 +51,7 @@ BABA_CORS_ORIGINS=
 
 DOCKER_STUB = """\
 #!/bin/sh
+printf '%s\n' "$*" >> "$PWD/docker-calls"
 case "$*" in
     *inspect*) echo healthy;;
     *version*) echo 27.0.0;;
@@ -111,6 +112,25 @@ def _env(app: Path) -> dict[str, str]:
             k, v = line.split("=", 1)
             out[k] = v
     return out
+
+
+def test_upgrade_provisions_the_configured_detector(tmp_path):
+    app = _tree(tmp_path)
+    tools = app / "tools"
+    tools.mkdir()
+    downloader = tools / "download_models.sh"
+    downloader.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$PWD/download-args"\n'
+        'printf "download\\n" >> "$PWD/docker-calls"\n'
+    )
+    downloader.chmod(0o755)
+    result = _run(app, "--upgrade", "--models=minimal")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (app / "download-args").read_text().splitlines() == [
+        "--minimal", "--bake-nv12", "--detector", "d-fine-s",
+    ]
+    calls = (app / "docker-calls").read_text().splitlines()
+    assert calls.index("download") < next(i for i, call in enumerate(calls) if "up -d" in call)
 
 
 def test_a_different_variant_is_applied_to_the_existing_env(tmp_path):

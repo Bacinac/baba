@@ -189,6 +189,95 @@ The next roadmap step exercises populated-database recovery through the canonica
 
 The containers use an internal network with no published ports. Camera connections are disabled only in the disposable database before API startup. API checks use the explicit CPU variant for metadata and authorization, with model loading unconfigured; they do not exercise the restored camera feeds or GPU models. This verifies populated data, media, secrets and API recovery. It does not establish fresh-host model provisioning, hardware throughput, disk-failure handling or archive consistency during simultaneous production writes. Production code, configuration and data were not changed by this exercise.
 
+## Hardware, fault and fresh-install acceptance — 5 October 2026
+
+The user requested completion of the operational acceptance step. The exercise found seven additional defects, F18–F24 below; the subsequent publication gate identified F25 in a locked dependency. **All 46 corrections are implemented**; the first 38 were published in `a6a05ccb` / 1.0.26. The user authorized publication on 6 October 2026. The eight corrections form one release bundle, gated against its exported commit and deployed through the canonical instance inventory; `/version` and `deploy/deploy.sh --status` identify the running revision.
+
+### P1 F18 Recording failures escape recovery or leave an unreadable final segment
+
+**Evidence:** Directory creation ran outside the recording session's retry boundary. A nonzero FFmpeg exit could be treated as a completed session and reset its backoff. Forced termination could also leave an MP4 without its closing metadata, including an intentional forced shutdown. Zero-byte output could be indexed.
+
+**Correction:** Directory initialization belongs to the per-camera retry. Nonzero unexpected exits raise, shutdown owns and drains the writer and its readers, and zero-byte files are excluded. A failed session's latest segment is probed even during forced shutdown: a specifically recognized corrupt tail is removed with its database row. Missing tools, probe timeouts and unexplained failures preserve the file and report the error; earlier valid recordings are retained.
+
+**Verification:** [The real storage probe](../tests/test_recorder_storage.sh) exercises read-only storage, a 1 MiB filesystem reaching ENOSPC, retention freeing space followed by automatic recording recovery, killed writers, forced shutdown, and a directory permission failure followed by repair. It passed against CPU and the freshly built NVIDIA recorder. Four focused tests cover corrupt-tail classification. The probe is included in the required publication gate. All 1,191 closed segments in the seven-camera acceptance snapshot subsequently passed real FFprobe checks with positive duration.
+
+### P2 F19 Root installation skips systemd setup and upgrades omit its configuration
+
+**Evidence:** The fresh guest runs as root without `sudo`; installer calls through `sudo` failed to install the health watchdog. The upgrade branch did not call watchdog, resource-governance or backup-timer configuration at all.
+
+**Correction:** One privilege helper executes directly for root and uses `sudo` for other users. Both installer branches apply the canonical configuration functions.
+
+**Verification:** The real root installation and subsequent source upgrade install root-owned watchdog/backup scripts and activate both configured timers. Installer regressions preserve existing configuration and selected-model provisioning.
+
+### P2 F20 NVIDIA FFmpeg builds use a compiler that does not support their CUDA SDK
+
+**Evidence:** The cold build used Clang 18 with CUDA 13.4 and emitted an unsupported-CUDA-version diagnostic. It also built unused encoding and filtering kernels.
+
+**Correction:** The builder uses the SHA-verified LLVM 23.1.2 archive and CUDA SDK 13.2.1, the highest SDK fully supported by that compiler. The runtime remains CUDA 13.4.1. The build retains all seven advertised NVDEC codecs and the required RTSP, parsing, scaling and rawvideo paths, while removing unused components. The archive's large Zstandard window is explicitly supported during extraction.
+
+**Verification:** The fresh guest compiled FFmpeg and its CUDA kernels from an empty build cache. The unsupported-SDK diagnostic is gone; seven H.264 feeds actually use NVDEC. This does not claim runtime acceptance for the six other compiled codec paths.
+
+### P2 F21 Minimal recovery provisioning downloads a different detector
+
+**Evidence:** An upgrade requesting minimal models did not pass its configured detector to the downloader. An unrecognized detector could also warn and download the default RT-DETR model, leaving the selected model absent.
+
+**Correction:** Provisioning derives the selected detector from `BABA_DETECTOR_MODEL`. An unknown selected detector is rejected before any download.
+
+**Verification:** Installer/downloader regressions verify the selected D-FINE argument and rejection without replacement or network fetching. Actual recovery into an empty models directory downloads and bakes D-FINE-s rather than changing the configured model.
+
+### P1 F22 A live FFmpeg process can stop producing frames indefinitely
+
+**Evidence:** One feed emitted a frame and then stopped while its FFmpeg process remained alive. The reader handled every timeout by continuing forever; all containers could still report healthy. Independent decoding of the same stream succeeded.
+
+**Correction:** Decoding allows 60 seconds for the first frame and 10 seconds between subsequent frames. Expiry reports an error to the camera supervisor, which closes and reconnects the decoder.
+
+**Verification:** Two focused regressions reproduce first-frame and subsequent-frame stalls. Seven feeds recover automatically after a 35-second source shutdown and after a 35-second source pause that keeps connections open. Container health remained green during the pause, demonstrating why decoded-frame progress needs its own deadline.
+
+### P1 F23 Fresh recovery creates a root-owned model cache
+
+**Evidence:** Docker created the missing nested cache bind directory as root. The unprivileged detector spent several minutes building its TensorRT engine and then failed to save it. Installer ownership preparation applied only to the initial wizard path, so upgrade and canonical restore did not repair it.
+
+**Correction:** One Compose `storage-init` service prepares the models/cache, API-state and media roots and shared-memory mode before the API and pipeline start. It replaces the former SHM-only initializer and installer/deploy ownership implementations. It respects the configured runtime UID/GID, leaves already correct ownership untouched and avoids recursive walks of media or PostgreSQL data. Initialization errors stop dependent services. Canonical start/restore paths remove obsolete service containers.
+
+**Verification:** [The initializer regression](../tests/test_storage_init.sh) checks fresh root-owned storage, a nondefault UID/GID, repeated execution, preservation of existing nested ownership and explicit read-only failure. The actual fresh-recovery directory becomes writable and the detector saves and reloads its native engine. No manual host-directory ownership workaround is required.
+
+### P2 F24 Models arriving after API startup leave face activation failed
+
+**Evidence:** Installer provisioning ran after stack startup. During fresh recovery the API attempted to load absent face models, stored a visible activation failure and did not retry when the download later completed. The embedder acknowledged the configured pair while the API remained unacknowledged.
+
+**Correction:** Both installation branches provision requested models before starting the stack. The existing API activation owner also retries a failed configured load every five seconds, while notifications can wake it immediately. An explicitly unconfigured detector does not create a retry loop. The selected revision and visible error remain authoritative until the configured pair loads successfully.
+
+**Verification:** The PostgreSQL regression brings model availability back after startup without a notification and checks both activation acknowledgements. The real recovery fixture starts the API with its AuraFace weights withheld, verifies the visible failure, returns the weights and obtains matching API/embedder/active revisions six seconds later without a notification or restart. The authenticated metadata/media and secret-preservation checks pass afterward.
+
+### P2 F25 The frontend lock retains a vulnerable source-map dependency
+
+**Evidence:** The mandatory publication scanner identified `source-map-js` 1.2.1 as affected by GHSA-68fv-2mgg-jv7q / CVE-2026-93749. The [reviewed advisory](https://github.com/advisories/GHSA-68fv-2mgg-jv7q) describes event-loop blocking through unchecked indexed source-map section offsets and identifies 1.2.2 as the patched version. This establishes the dependency defect; application-specific exploitation was not reproduced.
+
+**Correction:** Containerized npm updates the locked dependency to 1.2.2, with its registry URL and integrity hash. The same canonical lock feeds production and demo builds.
+
+**Verification:** Publication requires a clean dependency scan and the normal frontend dependency installation, tests, static checks and build against the updated lock. The required gate refuses publication while the affected version remains.
+
+### Executed operational checks
+
+| Check | Evidence and result |
+| --- | --- |
+| Production workload, read-only | Seven cameras on Intel Arc A380, RF-DETR Nano 512: 19.134 frame/detection/track updates per second over 60 seconds; worst per-camera frame-publish-to-detection p99 76.19 ms; zero new decoder/reconnect/coalescing errors and fresh recording files on every camera |
+| Cold NVIDIA installation | New disposable Debian guest with no previous Docker images, models or BABA state; canonical installer builds the service images and CUDA FFmpeg, fetches default model files, and starts the hardware pipeline on RTX 3060 |
+| NVIDIA workload | Seven anonymized H.264 feeds at two frames per second each: 14.017 aggregate updates per second over 60 seconds; worst per-camera p99 70.23 ms; matched frame/detection/track rates and zero new pipeline errors/coalescing |
+| Model execution | Actual CUDA execution of OSNet, DINOv2 and AuraFace with finite vectors of the expected dimensions; normalized identity/body vectors; YuNet detection execution; face activation acknowledgements verified separately |
+| Source shutdown | All seven feeds go quiet during a 35-second shutdown and return automatically 11.13–14.25 seconds after the source returns |
+| Source hang | All seven feeds recover automatically 9.33–12.45 seconds after a 35-second pause is released; no BABA restart is used |
+| Recording/storage faults | Real read-only, ENOSPC, retention recovery, directory permission, killed-writer and forced-shutdown probes; previous valid evidence remains; all 1,191 closed snapshot segments are readable |
+| Fresh application-state recovery | Canonical backup/restore into empty state/media/models tiers preserves seven cameras, durable reference-photo bytes, identity label, signing key, encrypted setting and admin login; selected models are fetched again and the native cache is regenerated; a further 60-second run restores all seven recording and inference paths |
+| Automatic guest reboot recovery | All 14 services return without a Compose command; both configured timers are active; TensorRT deserializes the saved engine; API/face acknowledgements, encrypted setting, signing key, admin login and reference-photo hash remain valid; all seven recording/inference paths work in the next 60-second sample with worst per-camera p99 86.58 ms and no new pipeline errors or OOM kills |
+| Source regressions | 32 focused Python/PostgreSQL cases pass with clean Ruff; initializer/storage integration probes and the canonical restore integration regression pass, as do shell syntax and diff whitespace. Publication additionally requires the normal exported-commit test, lint, dependency, secret and public-content gates |
+
+The recovery fixture's snapshot contains 38 physical tables and 3,901 rows, including 1,191 recording metadata rows. The canonical archive deliberately excludes recording video and transient embedding-sample data; this exercise does not claim those omitted files/rows are restored. Durable reference media and secrets are checked by hashes and decryption. The earlier populated-production checkpoint exercise above separately verifies the full retained table contents and media fingerprints.
+
+The NVIDIA fixture uses two vCPUs and 10 GiB of guest memory. An initial 6 GiB construction run exhausted guest memory during simultaneous build/model startup; the disposable guest was resized before acceptance. Recovery caused no additional OOM kill, and the reboot run has zero OOM kills. These results do not establish a minimum memory specification.
+
+The disposable guest, its configuration and root volume were removed after acceptance, with independent configuration/storage absence checks. Teardown reached the guest's 90-second graceful-stop limit before Proxmox completed removal; the fixture contained no operator data. Final read-only checks show all 14 services healthy on both active Intel instances, fresh recording files for seven and two cameras respectively, all three existing NVIDIA applications healthy, and the NVIDIA BABA reference still parked. No new correction was deployed during this exercise.
+
 ## Review baseline
 
 | Item | Value |
@@ -518,6 +607,6 @@ The shared-memory writer already invalidates a slot before overwriting pixels an
 
 The findings describe the reviewed checkout and reproducible failure conditions. They do not establish how often any defect has occurred in production. Live configuration can override file defaults; the production model and recording checks above describe the verified deployment snapshot, not an inference from defaults or a hardware performance assessment.
 
-Target checks now include production OpenVINO/VAAPI startup evidence and an isolated OSNet CUDA execution. They do not measure learned-model quality, camera reconnect behaviour under injected network loss, recording throughput or disk-failure recovery. Fresh migration success does not prove every upgrade path or restoration of a populated database. Required publication gates executed dependency CVE and secret scans for the published corrections; a complete container-image vulnerability and weights-license audit remains outside the executed checks.
+Target checks now include configured production workload measurements, a cold NVIDIA container installation, actual model execution, injected source loss/hangs, storage faults, and populated/fresh-state recovery. These workloads do not establish a throughput ceiling or learned-model quality. The fresh guest uses the host's existing GPU kernel driver; it does not prove a bare-metal driver installation. H.264 is the exercised hardware codec. Physical disk I/O faults and archive consistency during simultaneous production writes are outside these checks. Required publication gates executed dependency CVE and secret scans for the published corrections; a complete container-image vulnerability and weights-license audit remains outside the executed checks.
 
-The review is complete as a repository-wide source assessment with targeted verification. It is not an end-to-end production acceptance result. The report is the canonical record for these findings; project memory should link here rather than maintain a second copy of the review.
+The repository-wide source review and the operational acceptance scenarios above are verified within their stated scope. Publication uses the required commit and deployment gates; running revisions are read from instance stamps. The report is the canonical record for these findings; project memory should link here rather than maintain a second copy of the review.
