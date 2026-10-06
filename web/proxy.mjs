@@ -8,6 +8,7 @@ const password = process.env.BABA_GO2RTC_API_PASSWORD || "";
 const authorization = "Basic " + Buffer.from(`${process.env.BABA_GO2RTC_API_USER || "baba"}:${password}`).toString("base64");
 const authCache = new Map();
 const MEDIA_PATHS = new Set(["/api/stream.mp4", "/api/stream.mjpeg", "/api/frame.jpeg"]);
+const FRAME_SIZE = new Set(["width", "height"]);
 
 export function assertProxyConfig() {
   if (!password) throw new Error("BABA_GO2RTC_API_PASSWORD is required — run ./install.sh --upgrade");
@@ -25,11 +26,26 @@ export function proxyTarget(url, base, prefix) {
   return target;
 }
 
+function mediaRequest(target, method) {
+  return Boolean(target) && ["GET", "HEAD"].includes(method) && MEDIA_PATHS.has(target.pathname);
+}
+
 export function mediaStream(target, method) {
-  if (!target || !["GET", "HEAD"].includes(method) || !MEDIA_PATHS.has(target.pathname)) return null;
-  const params = [...target.searchParams];
-  if (params.length !== 1 || params[0][0] !== "src") return null;
-  return /^[a-z0-9][a-z0-9_-]{0,127}$/.test(params[0][1]) ? params[0][1] : null;
+  if (!mediaRequest(target, method)) return null;
+  const src = target.searchParams.getAll("src");
+  if (src.length !== 1) return null;
+  for (const [key, value] of target.searchParams) {
+    if (key === "src") continue;
+    if (target.pathname !== "/api/frame.jpeg" || !FRAME_SIZE.has(key) || !/^[1-9][0-9]{0,3}$/.test(value)) return null;
+  }
+  return /^[a-z0-9][a-z0-9_-]{0,127}$/.test(src[0]) ? src[0] : null;
+}
+
+// A peer checks its credential with a media path that names no stream: go2rtc
+// answers "stream not found" without opening a camera, and there is nothing to
+// authorize. Refusing it reads as a rejected key on the peer's side.
+export function credentialProbe(target, method) {
+  return mediaRequest(target, method) && target.search === "";
 }
 
 function fail(res, status, detail) {
@@ -91,7 +107,7 @@ function forward(req, res, target, media = false) {
 async function forwardGo2rtc(req, res, target) {
   const role = await roleOf(req);
   if (!role) return fail(res, 401, "not authenticated");
-  if (role !== "admin") {
+  if (role !== "admin" && !credentialProbe(target, req.method)) {
     const stream = mediaStream(target, req.method);
     if (!stream) return fail(res, 403, "go2rtc request requires admin role");
     const access = await probe(req, `/cameras/stream-access/${encodeURIComponent(stream)}`);

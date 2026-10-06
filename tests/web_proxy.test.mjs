@@ -67,16 +67,24 @@ test("shared dev and production proxy enforces media authorization before upstre
     "/go2rtc/api/stream.mp4?src=yard&src=yard_sub",
     "/go2rtc/api/stream.mp4?src=unregistered",
     "/go2rtc/api/stream.mp4?src=ffmpeg%3Ayard",
+    "/go2rtc/api/stream.mp4?width=1280",
+    "/go2rtc/api/stream.mp4?src=yard&width=1280",
+    "/go2rtc/api/frame.jpeg?src=yard&width=wide",
+    "/go2rtc/api/frame.jpeg?src=yard&width=1280&name=owned",
   ]) {
     assert.equal((await request(proxy, path)).status, 403, path);
   }
   assert.equal((await request(proxy, "/go2rtc/api/stream.mp4?src=yard", "viewer", "POST")).status, 403);
   assert.equal((await request(proxy, "/go2rtc/api/frame.jpeg?src=yard", "")).status, 401);
+  assert.equal((await request(proxy, "/go2rtc/api/stream.mp4", "")).status, 401);
+  assert.equal((await request(proxy, "/go2rtc/api/stream.mp4", "viewer", "POST")).status, 403);
   assert.equal(received.length, 0);
 
   for (const [path, cookie] of [
     ["/go2rtc/api/stream.mp4?src=yard", "viewer"],
     ["/go2rtc/api/frame.jpeg?src=yard_sub", "operator"],
+    ["/go2rtc/api/frame.jpeg?src=yard&width=1280", "viewer"],
+    ["/go2rtc/api/stream.mp4", "viewer"],
     ["/go2rtc/api/config", "admin"],
   ]) {
     const response = await request(proxy, path, cookie);
@@ -91,4 +99,5 @@ test("shared dev and production proxy enforces media authorization before upstre
   assert.equal(proxyTarget("/go2rtc/api/config?x=1", process.env.BABA_GO2RTC_URL, "/go2rtc").hostname, "127.0.0.1");
   assert.equal(mediaStream(new URL("http://x/api/stream.mp4?src=yard"), "GET"), "yard");
   assert.equal(mediaStream(new URL("http://x/api/stream.mp4?src=yard&video=h264"), "GET"), null);
+  assert.equal(mediaStream(new URL("http://x/api/frame.jpeg?src=yard&width=1280&height=720"), "GET"), "yard");
 });
