@@ -34,7 +34,7 @@ and keeps a record of what happened where.
 
 ## What it does
 
-It detects people and vehicles on every frame, follows them across the view and
+It detects people and vehicles whether or not they move, follows them across the view and
 recognises people when they return, on another camera or the next day in a
 different jacket. Licence plates are read from the full-resolution recording,
 with many noisy readings of one car combined into a single plate and matched
