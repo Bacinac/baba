@@ -1,15 +1,6 @@
-"""AI assistant settings + helpers.
-
-Routes:
-  GET    /ai/settings                — list configured providers (key masked)
-  PUT    /ai/settings                — upsert credentials for one provider
-  DELETE /ai/settings/{provider}     — clear credentials
-  POST   /ai/test                    — ping the provider (test API key/model)
-  POST   /ai/suggest-zones           — given a camera, ask the model to
-                                       propose zones for that view
-
-The frontend uses GET to populate the form (key is shown masked, never
-plaintext), PUT to save, and POST /ai/test for the "Test" button.
+"""AI over what a camera sees: zones proposed for a view, a drawn zone
+named, zone rules tuned from observations. The provider, key and model each
+call goes to are Settings → AI (home_core.llm, see baba_api.ai).
 """
 
 from __future__ import annotations
@@ -29,31 +20,11 @@ import httpx
 import numpy as np
 from baba_core.native import run_native
 from fastapi import APIRouter, HTTPException, Request
+from home_core import llm
 from PIL import Image
 
-from baba_api.ai_provider import (
-    AiCallResult,
-    ProviderModel,
-    ProviderModelsError,
-    anthropic_models,
-    anthropic_ping,
-    anthropic_text_json,
-    anthropic_vision_json,
-    openai_models,
-    openai_ping,
-    openai_text_json,
-    openai_vision_json,
-)
-from baba_api.crypto import decrypt_secret, encrypt_secret, mask_key
+from baba_api.ai import pick_model, settings_of
 from baba_api.models import (
-    SUPPORTED_AI_PROVIDERS,
-    AiModelOption,
-    AiModelsIn,
-    AiModelsOut,
-    AiSettingsIn,
-    AiSettingsOut,
-    AiTestIn,
-    AiTestOut,
     ClassifyPolygonIn,
     ClassifyPolygonOut,
     ProposedClassRule,
@@ -74,181 +45,6 @@ _SAM2_LOCK = threading.Lock()
 
 def _pool(request: Request):
     return request.app.state.pool
-
-
-def _secret(request: Request) -> str:
-    return request.app.state.secret_key
-
-
-def _validate_provider(provider: str) -> None:
-    if provider not in SUPPORTED_AI_PROVIDERS:
-        raise HTTPException(400, f"unsupported provider: {provider!r}")
-
-
-async def _load_setting_row(request: Request, provider: str):
-    return await _pool(request).fetchrow(
-        """
-        SELECT provider, model, api_key_encrypted, enabled,
-               last_used_at, created_at, updated_at
-        FROM ai_settings WHERE provider = $1
-        """,
-        provider,
-    )
-
-
-def _row_to_out(row, secret: str) -> AiSettingsOut:
-    plaintext = decrypt_secret(bytes(row["api_key_encrypted"]), secret)
-    return AiSettingsOut(
-        provider=row["provider"],
-        model=row["model"],
-        api_key_masked=mask_key(plaintext),
-        enabled=row["enabled"],
-        last_used_at=row["last_used_at"],
-        created_at=row["created_at"],
-        updated_at=row["updated_at"],
-    )
-
-
-@ai_router.get("/ai/settings", response_model=list[AiSettingsOut])
-async def list_ai_settings(request: Request) -> list[AiSettingsOut]:
-    rows = await _pool(request).fetch(
-        """
-        SELECT provider, model, api_key_encrypted, enabled,
-               last_used_at, created_at, updated_at
-        FROM ai_settings ORDER BY provider
-        """,
-    )
-    secret = _secret(request)
-    return [_row_to_out(r, secret) for r in rows]
-
-
-@ai_router.put("/ai/settings", response_model=AiSettingsOut)
-async def upsert_ai_setting(payload: AiSettingsIn, request: Request) -> AiSettingsOut:
-    _validate_provider(payload.provider)
-    secret = _secret(request)
-    existing = await _load_setting_row(request, payload.provider)
-
-    if payload.api_key:
-        ciphertext = encrypt_secret(payload.api_key, secret)
-    elif existing:
-        ciphertext = bytes(existing["api_key_encrypted"])
-    else:
-        raise HTTPException(400, "api_key is required when creating a new provider entry")
-
-    row = await _pool(request).fetchrow(
-        """
-        INSERT INTO ai_settings (provider, model, api_key_encrypted, enabled)
-        VALUES ($1, $2, $3, $4)
-        ON CONFLICT (provider) DO UPDATE SET
-            model = EXCLUDED.model,
-            api_key_encrypted = EXCLUDED.api_key_encrypted,
-            enabled = EXCLUDED.enabled
-        RETURNING provider, model, api_key_encrypted, enabled,
-                  last_used_at, created_at, updated_at
-        """,
-        payload.provider,
-        payload.model,
-        ciphertext,
-        payload.enabled,
-    )
-    return _row_to_out(row, secret)
-
-
-@ai_router.delete("/ai/settings/{provider}", status_code=204)
-async def delete_ai_setting(provider: str, request: Request) -> None:
-    _validate_provider(provider)
-    res = await _pool(request).execute("DELETE FROM ai_settings WHERE provider = $1", provider)
-    if res.endswith(" 0"):
-        raise HTTPException(404, "provider not configured")
-
-
-async def _provider_models(provider: str, api_key: str) -> list[ProviderModel]:
-    if provider == "anthropic":
-        return await anthropic_models(api_key)
-    if provider == "openai":
-        return await openai_models(api_key)
-    raise HTTPException(400, f"unsupported provider: {provider!r}")
-
-
-async def _ping(provider: str, api_key: str, model: str) -> AiCallResult:
-    if provider == "anthropic":
-        return await anthropic_ping(api_key, model)
-    if provider == "openai":
-        return await openai_ping(api_key, model)
-    raise HTTPException(400, f"unsupported provider: {provider!r}")
-
-
-async def _vision_json(
-    provider: str,
-    api_key: str,
-    model: str,
-    *,
-    system: str,
-    user_text: str,
-    image_jpeg: bytes,
-) -> AiCallResult:
-    if provider == "anthropic":
-        return await anthropic_vision_json(
-            api_key,
-            model,
-            system=system,
-            user_text=user_text,
-            image_jpeg=image_jpeg,
-        )
-    if provider == "openai":
-        return await openai_vision_json(
-            api_key,
-            model,
-            system=system,
-            user_text=user_text,
-            image_jpeg=image_jpeg,
-        )
-    raise HTTPException(400, f"unsupported provider: {provider!r}")
-
-
-@ai_router.post("/ai/models", response_model=AiModelsOut)
-async def list_ai_models(payload: AiModelsIn, request: Request) -> AiModelsOut:
-    _validate_provider(payload.provider)
-    api_key = payload.api_key
-    if not api_key:
-        row = await _load_setting_row(request, payload.provider)
-        if row is None:
-            raise HTTPException(400, "no stored credentials; pass api_key")
-        api_key = decrypt_secret(bytes(row["api_key_encrypted"]), _secret(request))
-    try:
-        found = await _provider_models(payload.provider, api_key)
-    except ProviderModelsError as e:
-        raise HTTPException(502, str(e)) from e
-    return AiModelsOut(models=[AiModelOption(id=m.id, label=m.label) for m in found])
-
-
-@ai_router.post("/ai/test", response_model=AiTestOut)
-async def test_ai_credentials(payload: AiTestIn, request: Request) -> AiTestOut:
-    _validate_provider(payload.provider)
-    secret = _secret(request)
-    api_key = payload.api_key
-    model = payload.model
-    if not api_key or not model:
-        row = await _load_setting_row(request, payload.provider)
-        if row is None:
-            raise HTTPException(400, "no stored credentials; pass api_key and model")
-        if not api_key:
-            api_key = decrypt_secret(bytes(row["api_key_encrypted"]), secret)
-        if not model:
-            model = row["model"]
-
-    result = await _ping(payload.provider, api_key, model)
-    if result.ok:
-        await _pool(request).execute(
-            "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-            payload.provider,
-        )
-    return AiTestOut(
-        ok=result.ok,
-        model=result.model or model,
-        latency_ms=result.latency_ms,
-        error=result.error,
-    )
 
 
 # --- Suggest zones --------------------------------------------------------
@@ -513,41 +309,6 @@ def _downscale_for_vlm(jpeg: bytes) -> bytes:
     return buf.getvalue()
 
 
-async def pick_active_provider(pool, secret: str, requested: str | None = None) -> tuple[str, str, str]:
-    """Resolve which provider to use for an AI call — Request-free so
-    background tasks (telemetry auto-analyzer) can share it.
-
-    - If `requested` is given, validate and use that row (must be enabled).
-    - Otherwise pick the first enabled row in `SUPPORTED_AI_PROVIDERS` order.
-
-    Returns (provider, api_key_plaintext, model). Raises 400 if nothing usable.
-    """
-
-    async def _row(provider: str):
-        return await pool.fetchrow(
-            "SELECT model, api_key_encrypted, enabled FROM ai_settings WHERE provider = $1",
-            provider,
-        )
-
-    if requested:
-        _validate_provider(requested)
-        row = await _row(requested)
-        if row is None or not row["enabled"]:
-            raise HTTPException(400, f"{requested!r} is not configured — open Settings → AI")
-        return requested, decrypt_secret(bytes(row["api_key_encrypted"]), secret), row["model"]
-
-    # No request — pick the first enabled provider deterministically.
-    for p in SUPPORTED_AI_PROVIDERS:
-        row = await _row(p)
-        if row is not None and row["enabled"]:
-            return p, decrypt_secret(bytes(row["api_key_encrypted"]), secret), row["model"]
-    raise HTTPException(400, "no AI credentials configured — open Settings → AI to set them")
-
-
-async def _pick_active_provider(request: Request, requested: str | None) -> tuple[str, str, str]:
-    return await pick_active_provider(_pool(request), _secret(request), requested)
-
-
 @ai_router.post("/ai/suggest-zones/{camera_id}", response_model=SuggestZonesOut)
 async def suggest_zones(
     camera_id: UUID,
@@ -560,7 +321,9 @@ async def suggest_zones(
     if cam is None:
         raise HTTPException(404, "camera not found")
 
-    active_provider, api_key, model = await _pick_active_provider(request, provider)
+    ai = settings_of(request)
+    pick = await pick_model(ai, provider)
+    model = pick.model
 
     go2rtc_url = request.app.state.config.go2rtc_url
     try:
@@ -576,18 +339,15 @@ async def suggest_zones(
     # back normalized [0,1] so the frontend doesn't need to know about this.
     snapshot = await asyncio.to_thread(_downscale_for_vlm, snapshot)
 
-    result = await _vision_json(
-        active_provider,
-        api_key,
+    result = await llm.vision_json(
+        pick.provider,
+        pick.api_key,
         model,
         system=_SUGGEST_SYSTEM,
         user_text=_build_user_prompt(cam["name"], locale),
         image_jpeg=snapshot,
     )
-    await pool.execute(
-        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-        active_provider,
-    )
+    await ai.touch(pick.provider)
 
     if not result.ok:
         return SuggestZonesOut(
@@ -604,7 +364,7 @@ async def suggest_zones(
         # something completely off-format. Truncate to avoid spamming.
         log.info(
             "suggest-zones: provider=%s model=%s parsed 0 zones from %d-char response: %r",
-        active_provider,
+            pick.provider,
             result.model or model,
             len(result.text or ""),
             (result.text or "")[:400],
@@ -854,10 +614,9 @@ async def classify_polygon(
     if cam is None:
         raise HTTPException(404, "camera not found")
 
-    active_provider, api_key, model = await _pick_active_provider(
-        request,
-        payload.provider,
-    )
+    ai = settings_of(request)
+    pick = await pick_model(ai, payload.provider)
+    model = pick.model
 
     go2rtc_url = request.app.state.config.go2rtc_url
     try:
@@ -881,18 +640,15 @@ async def classify_polygon(
         f"Camera: {cam['name']}. The highlighted red region is the zone "
         f"the operator drew. Name it (in {lang}) and pick its kind."
     )
-    result = await _vision_json(
-        active_provider,
-        api_key,
+    result = await llm.vision_json(
+        pick.provider,
+        pick.api_key,
         model,
         system=_CLASSIFY_SYSTEM,
         user_text=user_text,
         image_jpeg=annotated,
     )
-    await pool.execute(
-        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-            active_provider,
-    )
+    await ai.touch(pick.provider)
 
     if not result.ok:
         return ClassifyPolygonOut(
@@ -935,31 +691,6 @@ async def classify_polygon(
 # Text-only (no image) — the stats are the signal. The model's job is
 # inference on numbers, not visual interpretation.
 # ---------------------------------------------------------------------------
-
-
-async def _text_json(
-    provider: str,
-    api_key: str,
-    model: str,
-    *,
-    system: str,
-    user_text: str,
-) -> AiCallResult:
-    if provider == "anthropic":
-        return await anthropic_text_json(
-            api_key,
-            model,
-            system=system,
-            user_text=user_text,
-        )
-    if provider == "openai":
-        return await openai_text_json(
-            api_key,
-            model,
-            system=system,
-            user_text=user_text,
-        )
-    raise HTTPException(400, f"unsupported provider: {provider!r}")
 
 
 _TUNE_SYSTEM = (
@@ -1068,7 +799,9 @@ async def tune_zone_rules(
     if cam is None:
         raise HTTPException(404, "camera not found")
 
-    active_provider, api_key, model = await _pick_active_provider(request, provider)
+    ai = settings_of(request)
+    pick = await pick_model(ai, provider)
+    model = pick.model
 
     # Compact text payload — small enough for any model's context window.
     summary = {
@@ -1102,17 +835,14 @@ async def tune_zone_rules(
         f"{json.dumps(summary, ensure_ascii=False, indent=2)}"
     )
 
-    result = await _text_json(
-        active_provider,
-        api_key,
+    result = await llm.text_json(
+        pick.provider,
+        pick.api_key,
         model,
         system=_TUNE_SYSTEM,
         user_text=user_text,
     )
-    await _pool(request).execute(
-        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-        active_provider,
-    )
+    await ai.touch(pick.provider)
     if not result.ok:
         return TuneZoneRulesOut(
             model=model,
@@ -1124,7 +854,7 @@ async def tune_zone_rules(
     if not proposals:
         log.info(
             "tune-zone-rules: provider=%s model=%s parsed 0 proposals from %d-char response: %r",
-            active_provider,
+            pick.provider,
             result.model or model,
             len(result.text or ""),
             (result.text or "")[:400],

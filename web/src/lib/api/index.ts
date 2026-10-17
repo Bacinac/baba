@@ -6,7 +6,7 @@ import { t } from "$lib/i18n";
 import { ApiError, refusal, send, type Sending } from "$lib/kit";
 import { liveFeed, type FeedHandlers } from "./live.svelte";
 import type {
-  AiModelOption, AiSettings, AiSettingsIn, AiTestResult,
+  AiSettings,
   AuditEntry, AuditFacets, AuditFilter, AuditPurgeResult, BabaEvent,
   BabaUser, Camera, CameraDetectionRule, CameraIn,
   ClassifyPolygonResult, DeliveriesFilter, DeliveryRow, DetectionClass,
@@ -469,26 +469,12 @@ export const api = {
 
   // --- AI settings ---
 
-  /** The provider's live model list; `api_key` lists with a key not yet saved. */
-  listAiModels: (body: { provider: string; api_key?: string }): Promise<{ models: AiModelOption[] }> =>
-    request(`/ai/models`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(jsonOrThrow) as Promise<{ models: AiModelOption[] }>,
+  getAiSettings: (): Promise<AiSettings> =>
+    request(`/ai/settings`).then(jsonOrThrow) as Promise<AiSettings>,
 
-  listAiSettings: (): Promise<AiSettings[]> =>
-    request(`/ai/settings`).then(jsonOrThrow) as Promise<AiSettings[]>,
-
-  saveAiSettings: (body: AiSettingsIn): Promise<AiSettings> =>
-    request(`/ai/settings`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(jsonOrThrow) as Promise<AiSettings>,
-
-  deleteAiSettings: (provider: string) =>
-    request(`/ai/settings/${provider}`, { method: "DELETE" }).then(jsonOrThrow),
+  /** Settings → AI's card: home_core's /ai routes, on this session. */
+  ai: <T>(path: string, init?: RequestInit): Promise<T> =>
+    request(path, init).then(jsonOrThrow) as Promise<T>,
 
   // --- Face recognition ---
 
@@ -515,13 +501,6 @@ export const api = {
 
   getFaceRecomputeStatus: (jobId: string): Promise<FaceRecomputeStatus> =>
     request(`/face-recognition/recompute/${jobId}`).then(jsonOrThrow) as Promise<FaceRecomputeStatus>,
-
-  testAiCredentials: (body: { provider?: string; api_key?: string; model?: string }): Promise<AiTestResult> =>
-    request(`/ai/test`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(body),
-    }).then(jsonOrThrow) as Promise<AiTestResult>,
 
   suggestZones: (cameraId: string, locale: string, provider?: string): Promise<SuggestZonesResult> => {
     const qs = new URLSearchParams({ locale });

@@ -1,5 +1,6 @@
 // API DTOs and shared types. Split out of the old monolithic api.ts.
 
+import type { AiSetting } from "$lib/kit";
 import type { AnalysisStream, StreamPreset } from "$lib/streamPresets";
 
 export type { AnalysisStream, StreamPreset };
@@ -678,33 +679,9 @@ export interface IdentitiesFilter {
  *  flagging visually. Keep in sync with event-manager's default. */
 
 export interface AiSettings {
-  provider: string;
-  model: string;
-  api_key_masked: string;
-  enabled: boolean;
-  last_used_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AiSettingsIn {
-  provider: string;
-  model: string;
-  /** Omit (or null) on update to keep the existing key. */
-  api_key?: string | null;
-  enabled?: boolean;
-}
-
-export interface AiTestResult {
-  ok: boolean;
-  model: string | null;
-  latency_ms: number;
-  error: string | null;
-}
-
-export interface AiModelOption {
-  id: string;
-  label: string;
+  providers: string[];
+  roles: string[];
+  settings: AiSetting[];
 }
 
 // --- Face recognition models / settings ---

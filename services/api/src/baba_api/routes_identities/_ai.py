@@ -9,9 +9,11 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Query, Request
+from home_core import llm
+from home_core.llm import AiNotConfigured
 
+from baba_api.ai import ai_settings, pick_model, settings_of
 from baba_api.auth import AuthUser, current_user
-from baba_api.routes_ai import _pick_active_provider, _vision_json
 from baba_api.routes_identities._base import (
     identities_router,
 )
@@ -133,19 +135,18 @@ async def ai_describe_identity(
     except Exception as e:
         raise HTTPException(500, f"failed to read image: {e}") from e
 
-    active_provider, api_key, model = await _pick_active_provider(request, provider)
-    result = await _vision_json(
-        active_provider,
-        api_key,
+    ai = settings_of(request)
+    pick = await pick_model(ai, provider)
+    model = pick.model
+    result = await llm.vision_json(
+        pick.provider,
+        pick.api_key,
         model,
         system=_DESCRIBE_SYSTEM_HR,
         user_text=_DESCRIBE_USER,
         image_jpeg=image_jpeg,
     )
-    await pool.execute(
-        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1",
-        active_provider,
-    )
+    await ai.touch(pick.provider)
     if not result.ok:
         raise HTTPException(502, result.error or "AI call failed")
 
@@ -155,7 +156,7 @@ async def ai_describe_identity(
         return {
             "ok": False,
             "raw": result.text,
-            "model": active_provider + ":" + model,
+            "model": pick.provider + ":" + model,
             "latency_ms": result.latency_ms,
             "error": "could not parse JSON from AI response",
         }
@@ -167,7 +168,7 @@ async def ai_describe_identity(
         json.dumps(
             {
                 "gid": str(global_id),
-                "model": active_provider + ":" + model,
+                "model": pick.provider + ":" + model,
                 "name": suggestion.get("name"),
                 "kind": suggestion.get("kind"),
                 "plate": suggestion.get("plate"),
@@ -178,7 +179,7 @@ async def ai_describe_identity(
     return {
         "ok": True,
         "suggestion": suggestion,
-        "model": active_provider + ":" + model,
+        "model": pick.provider + ":" + model,
         "latency_ms": result.latency_ms,
         "image_path": image_rel,
     }
@@ -199,30 +200,16 @@ async def _auto_describe_one(app, pool, gid: UUID, thumb_path: str) -> None:
         log.exception("auto-describe %s: failed to read thumbnail", gid)
         return
 
-    # No `request` object here — duplicate the small slice of
-    # _pick_active_provider we need, off the app state directly.
-    from baba_api.crypto import decrypt_secret
-    from baba_api.models import SUPPORTED_AI_PROVIDERS
-
-    secret = app.state.secret_key
-    provider_row = None
-    for p in SUPPORTED_AI_PROVIDERS:
-        r = await pool.fetchrow(
-            "SELECT provider, model, api_key_encrypted, enabled FROM ai_settings WHERE provider = $1",
-            p,
-        )
-        if r is not None and r["enabled"]:
-            provider_row = r
-            break
-    if provider_row is None:
+    try:
+        pick = await ai_settings(pool, app.state.secret_key).pick("image")
+    except AiNotConfigured:
         return  # no provider configured — silent skip until operator sets one
-    api_key = decrypt_secret(bytes(provider_row["api_key_encrypted"]), secret)
-    provider, model = provider_row["provider"], provider_row["model"]
+    provider = pick.provider
 
-    result = await _vision_json(
+    result = await llm.vision_json(
         provider,
-        api_key,
-        model,
+        pick.api_key,
+        pick.model,
         system=_DESCRIBE_SYSTEM_HR,
         user_text=_DESCRIBE_USER,
         image_jpeg=image_jpeg,
@@ -278,7 +265,7 @@ async def _auto_describe_one(app, pool, gid: UUID, thumb_path: str) -> None:
                 json.dumps(
                     {
                         "gid": str(gid),
-                        "model": provider + ":" + model,
+                        "model": provider + ":" + pick.model,
                         "name": name,
                         "kind": kind,
                         "plate": plate,

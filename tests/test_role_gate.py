@@ -15,6 +15,7 @@ from uuid import UUID
 import pytest
 from baba_api import auth
 from baba_api.__main__ import build_app
+from baba_api.ai import settings_of
 from baba_api.auth import AuthUser, current_user
 from baba_api.config import ApiConfig
 from baba_api.routes import router as cameras_router
@@ -33,6 +34,7 @@ from baba_api.sse import sse_router
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from home_core.auth import encode_session_token
+from home_core.llm import ai_router as ai_settings_router
 
 PUBLIC = {
     ("POST", "/auth/login"),
@@ -50,7 +52,8 @@ SELF_SERVICE = {
 }
 ADMIN_WRITES = (
     cameras_router, discovery_router, probe_router, detection_rules_router,
-    tunables_router, ai_router, telemetry_router, notifications_router, rules_router,
+    tunables_router, ai_router, ai_settings_router(settings_of), telemetry_router,
+    notifications_router, rules_router,
 )
 ADMIN_ONLY = (users_router, audit_router)
 # Admin-only one route at a time, inside routers an operator otherwise writes

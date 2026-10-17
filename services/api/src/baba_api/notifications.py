@@ -7,7 +7,7 @@ catches the exception and surfaces it to the operator + records it in
 `notification_channels.last_error` for diagnostic context.
 
 We deliberately keep this module small + dependency-light: httpx is
-already pulled in for ai_provider and go2rtc, and SMTP uses the stdlib.
+already pulled in for home_core.llm and go2rtc, and SMTP uses the stdlib.
 No celery/queue: the v1 rule engine will fire deliveries inline from
 event-manager; if latency becomes an issue we can add a worker tier
 later without changing this adapter shape.

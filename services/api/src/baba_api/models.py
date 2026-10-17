@@ -221,67 +221,6 @@ class TestConnectionOut(BaseModel):
     error: str | None = None
 
 
-# --- AI settings ----------------------------------------------------------
-#
-# One row per provider in the DB. The model menu is the provider's own live
-# model list (POST /ai/models), never a list kept here.
-
-SUPPORTED_AI_PROVIDERS = ("anthropic", "openai")
-
-
-class AiSettingsIn(BaseModel):
-    """Upsert payload. `api_key` is required on create; on update, omit it to
-    keep the existing key (so users can edit `model`/`enabled` without
-    re-pasting). Empty string is rejected explicitly to avoid accidental wipes."""
-
-    provider: str = Field(..., min_length=1, max_length=32)
-    model: str = Field(..., min_length=1, max_length=128)
-    api_key: str | None = Field(None, min_length=10, max_length=512)
-    enabled: bool = True
-
-
-class AiSettingsOut(BaseModel):
-    provider: str
-    model: str
-    api_key_masked: str
-    enabled: bool
-    last_used_at: datetime | None
-    created_at: datetime
-    updated_at: datetime
-
-
-class AiModelsIn(BaseModel):
-    """`api_key` lists with a key not yet saved; omitted, the stored key is used."""
-
-    provider: str = Field(..., min_length=1, max_length=32)
-    api_key: str | None = Field(None, min_length=10, max_length=512)
-
-
-class AiModelOption(BaseModel):
-    id: str
-    label: str
-
-
-class AiModelsOut(BaseModel):
-    models: list[AiModelOption]
-
-
-class AiTestIn(BaseModel):
-    """Optional one-shot test: pass an api_key + model to validate without
-    storing. If api_key is omitted, the server uses the stored key."""
-
-    provider: str = Field("anthropic", min_length=1, max_length=32)
-    api_key: str | None = Field(None, min_length=10, max_length=512)
-    model: str | None = Field(None, min_length=1, max_length=128)
-
-
-class AiTestOut(BaseModel):
-    ok: bool
-    model: str | None = None
-    latency_ms: int
-    error: str | None = None
-
-
 # --- Zones ----------------------------------------------------------------
 #
 # Polygons are stored in normalized coordinates so they survive resolution

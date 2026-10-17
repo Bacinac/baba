@@ -26,13 +26,13 @@
     try {
       const [stats, ai, channels, rules, totp] = await Promise.all([
         api.getStats().catch(() => null),
-        api.listAiSettings().catch(() => []),
+        api.getAiSettings().catch(() => null),
         api.listNotificationChannels().catch(() => []),
         api.listNotificationRules().catch(() => []),
         api.totpStatus().catch(() => ({ enabled: false, enrolling: false })),
       ]);
       cameraCount = stats?.cameras_total ?? 0;
-      aiConfigured = ai.some((s) => s.enabled && !!s.api_key_masked);
+      aiConfigured = !!ai?.settings.some((s) => s.enabled && !!s.api_key_masked);
       // "Notifications ready" = at least one channel AND at least one
       // rule that references at least one of those channels. The strict
       // version would walk every rule's channel_ids vs the channel list;

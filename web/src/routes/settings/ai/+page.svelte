@@ -1,54 +1,32 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import { AiProviderCard, type AiRole } from "$lib/kit";
   import { api, type AiSettings } from "$lib/api";
   import { t } from "$lib/i18n";
-  import AiProviderCard from "$lib/AiProviderCard.svelte";
 
-  let stored = $state<AiSettings[]>([]);
-  let loading = $state(true);
+  const roles: AiRole[] = [{ key: "image", label: t("ai_model") }];
+
+  let ai = $state<AiSettings | null>(null);
   let error = $state<string | null>(null);
 
-  async function refresh() {
-    loading = true;
-    error = null;
+  onMount(async () => {
     try {
-      stored = await api.listAiSettings();
+      ai = await api.getAiSettings();
     } catch (e) {
       error = (e as Error).message;
-    } finally {
-      loading = false;
     }
-  }
-
-  function findStored(provider: string): AiSettings | null {
-    return stored.find((s) => s.provider === provider) ?? null;
-  }
-
-  onMount(refresh);
+  });
 </script>
 
-{#if loading}
-  <p class="text-baba-text-faint">{t("cameras_loading")}</p>
-{:else if error}
+{#if error}
   <p class="text-red-400">{error}</p>
+{:else if !ai}
+  <p class="text-baba-text-faint">{t("cameras_loading")}</p>
 {:else}
   <div class="grid max-w-5xl grid-cols-1 gap-5 lg:grid-cols-2">
-    {#key stored}
-      <AiProviderCard
-        provider="anthropic"
-        label={t("ai_provider_anthropic")}
-        apiKeyPlaceholder="sk-ant-…"
-        apiKeyHelpUrl="https://console.anthropic.com/settings/keys"
-        initialStored={findStored("anthropic")}
-      />
-      <AiProviderCard
-        provider="openai"
-        label={t("ai_provider_openai")}
-        apiKeyPlaceholder="sk-…"
-        apiKeyHelpUrl="https://platform.openai.com/api-keys"
-        initialStored={findStored("openai")}
-      />
-    {/key}
+    {#each ai.providers as provider (provider)}
+      <AiProviderCard {provider} {roles} stored={ai.settings.find((s) => s.provider === provider) ?? null} call={api.ai} />
+    {/each}
   </div>
   <p class="mt-4 max-w-2xl text-s text-baba-text-faint">
     {t("ai_priority_hint")}

@@ -28,7 +28,9 @@ from uuid import UUID
 
 from baba_core.light_profiles import apply_settings, capture_profile, record_change, snapshot_live
 from fastapi import APIRouter, Depends, HTTPException, Request
+from home_core import llm
 
+from baba_api.ai import ai_settings, pick_model
 from baba_api.audit import write_audit
 from baba_api.auth import AuthUser, current_user
 from baba_api.incident_replay import (
@@ -49,8 +51,6 @@ from baba_api.routes_ai import (
     _downscale_for_vlm,
     _fetch_snapshot,
     _json_from_vlm,
-    _vision_json,
-    pick_active_provider,
 )
 
 log = logging.getLogger(__name__)
@@ -492,15 +492,17 @@ async def run_incident_analysis(
 ) -> IncidentAnalyzeOut:
     """Request-free analysis core, shared by the manual route and the
     auto-analyzer background task."""
-    active_provider, api_key, model = await pick_active_provider(pool, secret_key, provider)
+    ai = ai_settings(pool, secret_key)
+    pick = await pick_model(ai, provider)
+    model = pick.model
     context = await _build_context(pool, incident)
 
     snapshot = await _fetch_snapshot(go2rtc_url, incident["camera_slug"], go2rtc_auth)
     snapshot = await asyncio.to_thread(_downscale_for_vlm, snapshot)
 
-    result = await _vision_json(
-        active_provider,
-        api_key,
+    result = await llm.vision_json(
+        pick.provider,
+        pick.api_key,
         model,
         system=_ANALYZE_SYSTEM,
         user_text=(
@@ -545,9 +547,7 @@ async def run_incident_analysis(
         verdict,
         json.dumps(suggestion),
     )
-    await pool.execute(
-        "UPDATE ai_settings SET last_used_at = now() WHERE provider = $1", active_provider
-    )
+    await ai.touch(pick.provider)
     return IncidentAnalyzeOut(
         model=result.model or model,
         latency_ms=result.latency_ms,

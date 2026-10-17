@@ -19,8 +19,10 @@ from baba_core.task_owner import TaskOwner
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from home_core.auth import bootstrap_admin_if_empty, load_or_create_secret
+from home_core.llm import ai_router as ai_settings_router
 from home_core.tasks import spawn
 
+from baba_api.ai import settings_of
 from baba_api.auth import (
     peer_or_operator_writes,
     require_role,
@@ -438,6 +440,7 @@ def build_app(config: ApiConfig) -> FastAPI:
     app.include_router(probe_router, dependencies=admin_writes)
     app.include_router(detection_rules_router, dependencies=admin_writes)
     app.include_router(tunables_router, dependencies=admin_writes)
+    app.include_router(ai_settings_router(settings_of), dependencies=admin_writes)
     app.include_router(ai_router, dependencies=admin_writes)
     # analyze spends AI credits and apply mutates camera settings/rules —
     # admin gate for writes, same policy as the rest of the AI surface.
