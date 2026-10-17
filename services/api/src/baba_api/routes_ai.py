@@ -33,18 +33,23 @@ from PIL import Image
 
 from baba_api.ai_provider import (
     AiCallResult,
+    ProviderModel,
+    ProviderModelsError,
+    anthropic_models,
     anthropic_ping,
     anthropic_text_json,
     anthropic_vision_json,
+    openai_models,
     openai_ping,
     openai_text_json,
     openai_vision_json,
 )
 from baba_api.crypto import decrypt_secret, encrypt_secret, mask_key
 from baba_api.models import (
-    ANTHROPIC_DEFAULT_MODEL,
-    OPENAI_DEFAULT_MODEL,
     SUPPORTED_AI_PROVIDERS,
+    AiModelOption,
+    AiModelsIn,
+    AiModelsOut,
     AiSettingsIn,
     AiSettingsOut,
     AiTestIn,
@@ -157,6 +162,14 @@ async def delete_ai_setting(provider: str, request: Request) -> None:
         raise HTTPException(404, "provider not configured")
 
 
+async def _provider_models(provider: str, api_key: str) -> list[ProviderModel]:
+    if provider == "anthropic":
+        return await anthropic_models(api_key)
+    if provider == "openai":
+        return await openai_models(api_key)
+    raise HTTPException(400, f"unsupported provider: {provider!r}")
+
+
 async def _ping(provider: str, api_key: str, model: str) -> AiCallResult:
     if provider == "anthropic":
         return await anthropic_ping(api_key, model)
@@ -191,6 +204,22 @@ async def _vision_json(
             image_jpeg=image_jpeg,
         )
     raise HTTPException(400, f"unsupported provider: {provider!r}")
+
+
+@ai_router.post("/ai/models", response_model=AiModelsOut)
+async def list_ai_models(payload: AiModelsIn, request: Request) -> AiModelsOut:
+    _validate_provider(payload.provider)
+    api_key = payload.api_key
+    if not api_key:
+        row = await _load_setting_row(request, payload.provider)
+        if row is None:
+            raise HTTPException(400, "no stored credentials; pass api_key")
+        api_key = decrypt_secret(bytes(row["api_key_encrypted"]), _secret(request))
+    try:
+        found = await _provider_models(payload.provider, api_key)
+    except ProviderModelsError as e:
+        raise HTTPException(502, str(e)) from e
+    return AiModelsOut(models=[AiModelOption(id=m.id, label=m.label) for m in found])
 
 
 @ai_router.post("/ai/test", response_model=AiTestOut)
@@ -894,29 +923,6 @@ async def classify_polygon(
         latency_ms=result.latency_ms,
         error=None,
     )
-
-
-@ai_router.get("/ai/defaults")
-async def ai_defaults() -> dict:
-    """Frontend convenience: per-provider suggested models for the dropdown.
-    The user can always type a different model — these are just the menu."""
-    return {
-        "providers": list(SUPPORTED_AI_PROVIDERS),
-        "anthropic_default_model": ANTHROPIC_DEFAULT_MODEL,
-        "anthropic_models": [
-            "claude-opus-4-8",
-            "claude-sonnet-5",
-            "claude-haiku-4-5",
-        ],
-        "openai_default_model": OPENAI_DEFAULT_MODEL,
-        "openai_models": [
-            "gpt-5",
-            "gpt-5-mini",
-            "gpt-5-nano",
-            "gpt-4.1",
-            "gpt-4o",
-        ],
-    }
 
 
 # ---------------------------------------------------------------------------

@@ -223,13 +223,9 @@ class TestConnectionOut(BaseModel):
 
 # --- AI settings ----------------------------------------------------------
 #
-# One row per provider in the DB; the UI today only edits the "anthropic"
-# slot but the schema is provider-keyed so adding OpenAI / local llama is
-# additive.
+# One row per provider in the DB. The model menu is the provider's own live
+# model list (POST /ai/models), never a list kept here.
 
-# Per-provider defaults. The frontend lets the user override the model.
-ANTHROPIC_DEFAULT_MODEL = "claude-opus-4-8"
-OPENAI_DEFAULT_MODEL = "gpt-5"
 SUPPORTED_AI_PROVIDERS = ("anthropic", "openai")
 
 
@@ -252,6 +248,22 @@ class AiSettingsOut(BaseModel):
     last_used_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class AiModelsIn(BaseModel):
+    """`api_key` lists with a key not yet saved; omitted, the stored key is used."""
+
+    provider: str = Field(..., min_length=1, max_length=32)
+    api_key: str | None = Field(None, min_length=10, max_length=512)
+
+
+class AiModelOption(BaseModel):
+    id: str
+    label: str
+
+
+class AiModelsOut(BaseModel):
+    models: list[AiModelOption]
 
 
 class AiTestIn(BaseModel):

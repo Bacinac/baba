@@ -3,7 +3,7 @@
   // these for Anthropic and one for OpenAI; each card manages its own form
   // state and API calls (load, save, test, delete) for its provider slot.
 
-  import { api, type AiSettings, type AiTestResult } from "$lib/api";
+  import { api, type AiModelOption, type AiSettings, type AiTestResult } from "$lib/api";
   import { dialog, Button, Card, Tag, SaveButton } from "$lib/kit";
   import { t, type MessageKey } from "$lib/i18n";
   import { dt } from "$lib/datetime.svelte";
@@ -11,8 +11,6 @@
   type Props = {
     provider: "anthropic" | "openai";
     label: string;
-    models: string[];
-    defaultModel: string;
     apiKeyPlaceholder: string;
     apiKeyHelpUrl: string;
     initialStored: AiSettings | null;
@@ -21,8 +19,6 @@
   let {
     provider,
     label,
-    models,
-    defaultModel,
     apiKeyPlaceholder,
     apiKeyHelpUrl,
     initialStored,
@@ -31,17 +27,43 @@
   // Props seed the editable state once; subsequent edits stay local.
   // untrack() makes that intent explicit and silences the rune-reactivity
   // warning we'd otherwise get from referencing props in $state init.
-  import { untrack } from "svelte";
+  import { onMount, untrack } from "svelte";
   let stored = $state<AiSettings | null>(untrack(() => initialStored));
-  let model = $state(untrack(() => initialStored?.model ?? defaultModel));
+  let model = $state(untrack(() => initialStored?.model ?? ""));
   let apiKey = $state("");
   let enabled = $state(untrack(() => initialStored?.enabled ?? true));
 
   let saving = $state(false);
   let saved = $state(false);
   const dirty = $derived(
-    !!apiKey.trim() || (stored !== null && (model !== stored.model || enabled !== stored.enabled)),
+    model !== "" &&
+      (!!apiKey.trim() || (stored !== null && (model !== stored.model || enabled !== stored.enabled))),
   );
+
+  let models = $state<AiModelOption[] | null>(null);
+  let loadingModels = $state(false);
+  let modelsError = $state<string | null>(null);
+  const listed = $derived((models ?? []).some((m) => m.id === model));
+  const modelOffered = $derived(models === null || model === "" || listed);
+
+  async function loadModels() {
+    loadingModels = true;
+    modelsError = null;
+    try {
+      const key = apiKey.trim();
+      models = (await api.listAiModels(key ? { provider, api_key: key } : { provider })).models;
+    } catch (e) {
+      models = null;
+      modelsError = (e as Error).message;
+    } finally {
+      loadingModels = false;
+    }
+  }
+
+  onMount(() => {
+    if (stored) void loadModels();
+  });
+
   let testing = $state(false);
   let testResult = $state<AiTestResult | null>(null);
   let error = $state<string | null>(null);
@@ -103,7 +125,9 @@
       stored = null;
       apiKey = "";
       testResult = null;
-      model = defaultModel;
+      model = "";
+      models = null;
+      modelsError = null;
       enabled = true;
     } catch (e) {
       error = (e as Error).message;
@@ -128,12 +152,28 @@
     <span class="block text-s text-baba-text-muted">{t("ai_model")}</span>
     <select
       bind:value={model}
-      class="w-full rounded border border-baba-border bg-baba-panel-2 px-2 py-1.5 text-m"
+      disabled={models === null}
+      class="w-full rounded border border-baba-border bg-baba-panel-2 px-2 py-1.5 text-m disabled:opacity-60"
     >
-      {#each models as m}
-        <option value={m}>{m}</option>
+      {#if model === ""}
+        <option value="" disabled>{t("ai_model_pick")}</option>
+      {/if}
+      {#if model !== "" && !listed}
+        <option value={model}>{models === null ? model : `${model} · ${t("ai_model_unavailable")}`}</option>
+      {/if}
+      {#each models ?? [] as m (m.id)}
+        <option value={m.id}>{m.label}</option>
       {/each}
     </select>
+    {#if loadingModels}
+      <span class="mt-1 block text-s text-baba-text-faint">{t("ai_models_loading")}</span>
+    {:else if modelsError}
+      <span class="mt-1 block text-s text-red-400">{t("ai_models_failed")}: {modelsError}</span>
+    {:else if models === null}
+      <span class="mt-1 block text-s text-baba-text-faint">{t("ai_models_need_key")}</span>
+    {:else if !modelOffered}
+      <span class="mt-1 block text-s text-red-400">{t("ai_model_unavailable_hint")}</span>
+    {/if}
   </label>
 
   <label class="block">
@@ -142,6 +182,7 @@
       type="password"
       autocomplete="off"
       bind:value={apiKey}
+      onchange={() => apiKey.trim() && loadModels()}
       placeholder={stored ? stored.api_key_masked : apiKeyPlaceholder}
       class="w-full rounded border border-baba-border bg-baba-panel-2 px-2 py-1.5 font-mono text-m"
     />
@@ -167,7 +208,7 @@
   <div class="flex flex-wrap items-center gap-2">
     <SaveButton {dirty} {saving} onclick={save} />
 
-    <Button onclick={test} disabled={testing || (!stored && !apiKey)}>{testing ? t("ai_testing") : t("ai_test")}</Button>
+    <Button onclick={test} disabled={testing || model === "" || (!stored && !apiKey)}>{testing ? t("ai_testing") : t("ai_test")}</Button>
 
     {#if stored}
       <div class="ml-auto"><Button tone="danger" onclick={deleteKey}>{t("ai_delete")}</Button></div>

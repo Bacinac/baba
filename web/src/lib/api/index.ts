@@ -6,7 +6,7 @@ import { t } from "$lib/i18n";
 import { ApiError, refusal, send, type Sending } from "$lib/kit";
 import { liveFeed, type FeedHandlers } from "./live.svelte";
 import type {
-  AiDefaults, AiSettings, AiSettingsIn, AiTestResult,
+  AiModelOption, AiSettings, AiSettingsIn, AiTestResult,
   AuditEntry, AuditFacets, AuditFilter, AuditPurgeResult, BabaEvent,
   BabaUser, Camera, CameraDetectionRule, CameraIn,
   ClassifyPolygonResult, DeliveriesFilter, DeliveryRow, DetectionClass,
@@ -469,8 +469,13 @@ export const api = {
 
   // --- AI settings ---
 
-  aiDefaults: (): Promise<AiDefaults> =>
-    request(`/ai/defaults`).then(jsonOrThrow) as Promise<AiDefaults>,
+  /** The provider's live model list; `api_key` lists with a key not yet saved. */
+  listAiModels: (body: { provider: string; api_key?: string }): Promise<{ models: AiModelOption[] }> =>
+    request(`/ai/models`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then(jsonOrThrow) as Promise<{ models: AiModelOption[] }>,
 
   listAiSettings: (): Promise<AiSettings[]> =>
     request(`/ai/settings`).then(jsonOrThrow) as Promise<AiSettings[]>,

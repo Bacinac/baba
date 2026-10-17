@@ -702,12 +702,9 @@ export interface AiTestResult {
   error: string | null;
 }
 
-export interface AiDefaults {
-  providers: string[];
-  anthropic_default_model: string;
-  anthropic_models: string[];
-  openai_default_model: string;
-  openai_models: string[];
+export interface AiModelOption {
+  id: string;
+  label: string;
 }
 
 // --- Face recognition models / settings ---
