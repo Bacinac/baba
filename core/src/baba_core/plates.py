@@ -221,6 +221,22 @@ class PlateSighting:
     when: Any = None
 
 
+def one_per_plate(frame: list[PlateSighting]) -> list[PlateSighting]:
+    """One reading per plate out of a single frame read through several crops.
+
+    A zone and the car's own box overlap whenever the car drives through the
+    zone, and the plate inside both would otherwise vote twice per frame.
+    """
+    kept: list[PlateSighting] = []
+    for s in sorted(frame, key=lambda s: s.confidence, reverse=True):
+        if all(
+            math.hypot(s.at[0] - k.at[0], s.at[1] - k.at[1]) >= max(s.width, k.width) / 2
+            for k in kept
+        ):
+            kept.append(s)
+    return kept
+
+
 def _spread(points: list[tuple[float, float]]) -> float:
     """How far apart the two furthest of these points are."""
     return max(

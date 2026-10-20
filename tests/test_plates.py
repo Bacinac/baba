@@ -14,6 +14,7 @@ from baba_core.plates import (
     match_gallery,
     moving_samples,
     normalise_plate,
+    one_per_plate,
     plate_distance,
 )
 
@@ -91,6 +92,15 @@ def test_a_plate_that_never_moves_is_not_on_the_car_that_did():
     assert [d[0] for d in dropped] == ["ZG9648GZ"]
     _, travelled, moved, n = dropped[0]
     assert n == 4 and moved == 0.0 and travelled > 700
+
+
+def test_a_plate_inside_the_zone_and_the_box_votes_once():
+    # The zone crop and the car's box crop overlap while the car crosses the
+    # zone; the same plate read through both is one reading of the frame.
+    zone = PlateSighting(text="ZG9420GZ", confidence=0.98, width=82, at=(1240, 610))
+    box = PlateSighting(text="ZG9420GZ", confidence=1.0, width=84, at=(1246, 612))
+    other = PlateSighting(text="ZG9648GZ", confidence=0.9, width=80, at=(1600, 640))
+    assert one_per_plate([zone, box, other]) == [box, other]
 
 
 def test_a_plate_riding_the_car_survives():

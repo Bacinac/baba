@@ -44,6 +44,7 @@ from baba_core.plates import (
     focus_times,
     match_gallery,
     moving_samples,
+    one_per_plate,
 )
 from baba_core.recordings import covers_until_sql
 
@@ -854,8 +855,8 @@ class PlateReader:
             # found nothing on footage that yields ZG9420GZ at confidence 1.00
             # on 26 consecutive frames.
             #
-            # The zone is still what says WHERE to crop, which is the part it
-            # is good at. WHEN is the movement: a plate is legible for a couple
+            # The zone and the car's box still say WHERE to crop, which is the
+            # part they are good at. WHEN is the movement: a plate is legible for a couple
             # of seconds somewhere in the approach, and which seconds cannot be
             # known in advance — that is what the vote is for.
             #
@@ -1098,17 +1099,25 @@ class PlateReader:
                 # them would fuse two small gates into one large crop and hand
                 # the detector something several times coarser — the difference
                 # between 46 readings and 6, measured on the same footage.
+                #
+                # The car's own box is cropped as well, not only where no zone
+                # exists. A zone covers the approach, where the west box lags;
+                # the box covers wherever else the car shows its plate. On the
+                # 20.10 arrival the car reversed into P1 and its rear plate
+                # read cleanly on 31 consecutive frames at 67-176 px, all of
+                # them outside the zone, while the zone saw only the front
+                # plate at the frame edge and returned noise.
                 crops: list[tuple[np.ndarray, tuple[int, int, int, int], tuple[int, int]]] = []
-                if boxes:
-                    h, w = frame.shape[:2]
-                    for bx in boxes:
-                        c = _crop(frame, (bx[0] * w, bx[1] * h, bx[2] * w, bx[3] * h), 1.0)
-                        if c is not None:
-                            crops.append(c)
-                else:
+                h, w = frame.shape[:2]
+                for bx in boxes or ():
+                    c = _crop(frame, (bx[0] * w, bx[1] * h, bx[2] * w, bx[3] * h), 1.0)
+                    if c is not None:
+                        crops.append(c)
+                if samples:
                     c = _crop(frame, _bbox_at(samples, at), scale)
                     if c is not None:
                         crops.append(c)
+                frame_hits: list[PlateSighting] = []
                 for crop, inner, origin in crops:
                     # A plate has to sit inside the window rather than in the
                     # padding around it: on a driveway that padding contains
@@ -1121,7 +1130,7 @@ class PlateReader:
                         cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
                         if not (inner[0] <= cx <= inner[2] and inner[1] <= cy <= inner[3]):
                             continue
-                        hits.append(
+                        frame_hits.append(
                             PlateSighting(
                                 text=reading.text,
                                 confidence=reading.confidence,
@@ -1134,6 +1143,7 @@ class PlateReader:
                                 when=at,
                             )
                         )
+                hits.extend(one_per_plate(frame_hits))
             return used, hits
         finally:
             cap.release()
