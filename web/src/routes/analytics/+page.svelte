@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
+  import { byLabel } from "#lib/order.js";
   import { onMount, untrack } from "svelte";
   import {
     api,
@@ -9,11 +9,11 @@
     type EventsByKindOut, type ParkingEpisode,
     type HeatmapClassGroup,
     type HeatmapOut,
-  } from "$lib/api";
-  import { formatNumber, Picks, Stats, Tag, PageHead } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { formatUptime } from "$lib/format";
-  import { dt } from "$lib/datetime.svelte";
+  } from "#lib/api/index.js";
+  import { formatNumber, Picks, Stats, Tag, PageHead } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { formatUptime } from "#lib/format.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   let days = $state<number>(7);
   let loading = $state(true);

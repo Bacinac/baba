@@ -10,11 +10,11 @@
     type TelemetryIncident,
     type IncidentChange,
     type TelemetryUsage,
-  } from "$lib/api";
-  import { formatNumber, Button, Tag, type TagTone, Toggle } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
-  import IncidentReplay from "$lib/IncidentReplay.svelte";
+  } from "#lib/api/index.js";
+  import { formatNumber, Button, Tag, type TagTone, Toggle } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import IncidentReplay from "#lib/IncidentReplay.svelte";
 
   let incidents = $state<TelemetryIncident[]>([]);
   let error = $state<string | null>(null);

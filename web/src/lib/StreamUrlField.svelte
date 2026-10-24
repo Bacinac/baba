@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
+  import { byLabel } from "#lib/order.js";
   import { onMount } from "svelte";
-  import { formatNumber, Button } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { api, type TestConnectionResult } from "$lib/api";
+  import { formatNumber, Button } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { api, type TestConnectionResult } from "#lib/api/index.js";
   import {
     recogniseStreams,
     streamsFor,
@@ -11,7 +11,7 @@
     type CameraStreams,
     type StreamChoice,
     type StreamPreset,
-  } from "$lib/streamPresets";
+  } from "#lib/streamPresets.js";
 
   type Props = {
     streamUrl: string;

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import { api, type PurgeScope, type StorageUsage, type RecordingSettings } from "$lib/api";
-  import { dialog, formatBytes, formatNumber, Button, Card, SaveButton } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
-  import { auth } from "$lib/auth.svelte";
+  import { api, type PurgeScope, type StorageUsage, type RecordingSettings } from "#lib/api/index.js";
+  import { dialog, formatBytes, formatNumber, Button, Card, SaveButton } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import { auth } from "#lib/auth.svelte.js";
 
   let usage = $state<StorageUsage | null>(null);
   let rs = $state<RecordingSettings | null>(null);

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type BabaUser } from "$lib/api";
-  import { ApiError, PageActions } from "$lib/kit";
-  import { auth } from "$lib/auth.svelte";
-  import { Button, Card, Field, Notice, dialog, toasts, Tag } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
+  import { api, type BabaUser } from "#lib/api/index.js";
+  import { ApiError, PageActions } from "#lib/kit/index.js";
+  import { auth } from "#lib/auth.svelte.js";
+  import { Button, Card, Field, Notice, dialog, toasts, Tag } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   let users = $state<BabaUser[]>([]);
   let loading = $state(true);

@@ -1,12 +1,12 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { theme, Button } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { auth } from "$lib/auth.svelte";
+  import { theme, Button } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { auth } from "#lib/auth.svelte.js";
   import { onMount } from "svelte";
-  import LanguageSwitcher from "$lib/LanguageSwitcher.svelte";
-  import ThemeSwitcher from "$lib/ThemeSwitcher.svelte";
-  import Brand from "$lib/Brand.svelte";
+  import LanguageSwitcher from "#lib/LanguageSwitcher.svelte";
+  import ThemeSwitcher from "#lib/ThemeSwitcher.svelte";
+  import Brand from "#lib/Brand.svelte";
 
   onMount(() => theme.sync());
 
@@ -32,7 +32,7 @@
     if (land && land.startsWith("/") && !land.startsWith("//") && !land.startsWith("/\\")) {
       dest = land;
     }
-    goto(dest, { replaceState: true });
+    goto(dest, { replace: true }).catch(() => goto("/", { replace: true }));
   }
 
   async function onSubmit(e: SubmitEvent) {

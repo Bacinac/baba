@@ -8,9 +8,9 @@
   // Boxes come from the detector's live pre-gate trace, run through the live
   // gate on the server. Nothing here re-derives a threshold decision in the
   // browser; the numbers on screen are the ones production would produce.
-  import { api, cameraClipUrl, type IncidentReplay } from "$lib/api";
-  import { formatNumber, Button, Picks } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { api, cameraClipUrl, type IncidentReplay } from "#lib/api/index.js";
+  import { formatNumber, Button, Picks } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   let { incidentId, onClose }: { incidentId: string; onClose: () => void } = $props();
 
   let replay = $state<IncidentReplay | null>(null);

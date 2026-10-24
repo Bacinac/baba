@@ -1,6 +1,6 @@
 // BABA's articles (help/index.json and a body per language), for the frame's
 // "?", the /help pages and every Hint.
-import { Help, type HelpEntry } from "$lib/kit";
+import { Help, type HelpEntry } from "#lib/kit/index.js";
 import index from "./help/index.json";
 
 export const help = new Help(

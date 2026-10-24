@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { t } from "$lib/i18n";
-import { ApiError } from "$lib/kit";
+import { t } from "#lib/i18n/index.js";
+import { ApiError } from "#lib/kit/index.js";
 import { api } from "./index";
 
 function reply(status: number, body?: unknown): Response {

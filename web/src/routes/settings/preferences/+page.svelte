@@ -1,15 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { api, type UserPreferences } from "$lib/api";
-  import { t } from "$lib/i18n";
-  import { Card, Picks, Toggle, formatNumber } from "$lib/kit";
+  import { api, type UserPreferences } from "#lib/api/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { Card, Picks, Toggle, formatNumber } from "#lib/kit/index.js";
   import {
     playback,
     ACTIVITY_RANGES,
     CLIP_PREROLL_DEFAULT,
     CLIP_POSTROLL_DEFAULT,
     type ActivityRange,
-  } from "$lib/playback.svelte";
+  } from "#lib/playback.svelte.js";
 
   // Per-user viewing / playback preferences. Persisted in the same
   // /auth/preferences jsonb blob as theme/locale, applied app-wide via

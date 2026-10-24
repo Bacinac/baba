@@ -583,7 +583,7 @@ def _crop_with_polygon_overlay(jpeg: bytes, polygon: list[list[float]]) -> bytes
     cv2.fillPoly(overlay, [pts], color=(255, 64, 64))
     arr = cv2.addWeighted(overlay, 0.35, arr, 0.65, 0)
     cv2.polylines(arr, [pts], isClosed=True, color=(255, 0, 0), thickness=3)
-    out = Image.fromarray(arr, mode="RGB")
+    out = Image.fromarray(arr)
     buf = io.BytesIO()
     out.save(buf, format="JPEG", quality=88, optimize=True)
     return buf.getvalue()

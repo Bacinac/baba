@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { auth } from "$lib/auth.svelte";
-  import { Button, Card, Field, i18n, Notice, theme, toasts, type Locale, type Theme, Tag, SaveButton } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { api, type UserPreferences } from "$lib/api";
-  import { ApiError } from "$lib/kit";
-  import { dt } from "$lib/datetime.svelte";
+  import { auth } from "#lib/auth.svelte.js";
+  import { Button, Card, Field, i18n, Notice, theme, toasts, type Locale, type Theme, Tag, SaveButton } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { api, type UserPreferences } from "#lib/api/index.js";
+  import { ApiError } from "#lib/kit/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   let createdAt = $state<string | null>(null);
   let lastLoginAt = $state<string | null>(null);

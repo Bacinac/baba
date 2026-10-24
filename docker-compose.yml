@@ -637,7 +637,6 @@ services:
     volumes:
       - ./web/src:/app/src
       - ./web/static:/app/static
-      - ./web/svelte.config.js:/app/svelte.config.js
       - ./web/vite.config.ts:/app/vite.config.ts
       - ./web/tsconfig.json:/app/tsconfig.json
       - ./web/package.json:/app/package.json

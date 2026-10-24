@@ -8,7 +8,7 @@
 // original class→color mapping (person=amber, car=violet, truck=yellow…) so
 // nobody has to relearn the legend.
 
-import { t, type MessageKey } from "$lib/i18n";
+import { t, type MessageKey } from "#lib/i18n/index.js";
 const PALETTE = [
   "#ffb300", // 0 person   — vivid amber
   "#00e5ff", // 1 bicycle  — electric cyan

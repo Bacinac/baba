@@ -1,4 +1,4 @@
-import { compareHr } from "$lib/kit";
+import { compareHr } from "#lib/kit/index.js";
 
 /** A list a person picks from reads in their alphabet, by the words they see
  *  rather than the keys behind them. */

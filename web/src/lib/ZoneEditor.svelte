@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { dialog, formatNumber, i18n, Button, Card, Tag } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
+  import { dialog, formatNumber, i18n, Button, Card, Tag } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
   import { onMount, onDestroy } from "svelte";
   import {
     api,
@@ -15,11 +15,11 @@
     type ZoneObservationPayload,
     type ZoneSuggestion,
     type Feed,
-  } from "$lib/api";
-  import { classColor, MOTION_COLORS, motionStateLabel } from "$lib/detectionColors";
-  import ZoneRulesCard from "$lib/ZoneRulesCard.svelte";
-  import LiveStream from "$lib/LiveStream.svelte";
-  import { classLabel } from "$lib/classLabels";
+  } from "#lib/api/index.js";
+  import { classColor, MOTION_COLORS, motionStateLabel } from "#lib/detectionColors.js";
+  import ZoneRulesCard from "#lib/ZoneRulesCard.svelte";
+  import LiveStream from "#lib/LiveStream.svelte";
+  import { classLabel } from "#lib/classLabels.js";
   import {
     DEAD_END_ALPHA,
     DEAD_END_COLOR,
@@ -30,7 +30,7 @@
     deadEndLabel,
     maintainLabel,
     pointInPolygonNorm,
-  } from "$lib/detectionState";
+  } from "#lib/detectionState.js";
 
   // --- props / state ------------------------------------------------------
 

@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
-  import { formatNumber, Button, Card, Tag, Toggle } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { byLabel } from "#lib/order.js";
+  import { formatNumber, Button, Card, Tag, Toggle } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount } from "svelte";
   import {
     api,
     type CameraDetectionRule,
     type EffectiveDetectionRule,
     type GlobalDetectionRule,
-  } from "$lib/api";
-  import { classLabel } from "$lib/classLabels";
+  } from "#lib/api/index.js";
+  import { classLabel } from "#lib/classLabels.js";
 
   type Props = { cameraId: string };
   let { cameraId }: Props = $props();

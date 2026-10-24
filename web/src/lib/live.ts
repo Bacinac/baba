@@ -7,7 +7,7 @@
 // thin seam so a WebRTC sub-second fast-path for LAN access can be layered on
 // later (try WebRTC, fall back to this) without touching callers.
 
-import { connectMSE } from "$lib/mse";
+import { connectMSE } from "#lib/mse.js";
 
 export type LiveState = "connecting" | "playing" | "error";
 

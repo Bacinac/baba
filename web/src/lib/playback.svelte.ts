@@ -2,7 +2,7 @@
 // prefs blob via auth.svelte.ts `applyServerPrefs` at login/startup so any
 // component (the Activity player) can read them without its own fetch.
 
-import type { UserPreferences } from "$lib/api";
+import type { UserPreferences } from "#lib/api/index.js";
 
 export const CLIP_PREROLL_DEFAULT = 5;
 export const CLIP_POSTROLL_DEFAULT = 4;

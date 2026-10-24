@@ -1,4 +1,4 @@
-import { formatNumber } from "$lib/kit";
+import { formatNumber } from "#lib/kit/index.js";
 
 /** Adaptive-precision gauge value: 2 dp below 10, 1 dp below 100, else 0. */
 export function formatMetric(n: number): string {

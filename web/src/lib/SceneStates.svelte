@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { dialog, formatNumber, Button, Card, Tag } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { dialog, formatNumber, Button, Card, Tag } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   // Scene-state regions editor: draw a fixed polygon over the live frame,
   // label its states (e.g. open/closed), capture a few reference frames per
   // state, and the state-evaluator classifies the region's persistent state on
@@ -13,9 +13,9 @@
     type SceneEvalResult,
     type SceneRegion,
     type ScenePrototype,
-  } from "$lib/api";
-  import { dt } from "$lib/datetime.svelte";
-  import LiveStream from "$lib/LiveStream.svelte";
+  } from "#lib/api/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import LiveStream from "#lib/LiveStream.svelte";
 
   let {
     cameraId,

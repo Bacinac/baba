@@ -2,8 +2,8 @@
 // (which proxies /api/* to the FastAPI service in dev, hits an env-configured
 // origin in prod).
 
-import { t } from "$lib/i18n";
-import { ApiError, refusal, send, type Sending } from "$lib/kit";
+import { t } from "#lib/i18n/index.js";
+import { ApiError, refusal, send, type Sending } from "#lib/kit/index.js";
 import { liveFeed, type FeedHandlers } from "./live.svelte";
 import type {
   AiSettings,

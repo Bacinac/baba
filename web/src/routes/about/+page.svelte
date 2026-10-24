@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { About } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import Brand from "$lib/Brand.svelte";
-  import { version } from "$lib/version.svelte";
+  import { About } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import Brand from "#lib/Brand.svelte";
+  import { version } from "#lib/version.svelte.js";
 </script>
 
 <About

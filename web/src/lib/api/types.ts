@@ -1,7 +1,7 @@
 // API DTOs and shared types. Split out of the old monolithic api.ts.
 
-import type { AiSetting } from "$lib/kit";
-import type { AnalysisStream, StreamPreset } from "$lib/streamPresets";
+import type { AiSetting } from "#lib/kit/index.js";
+import type { AnalysisStream, StreamPreset } from "#lib/streamPresets.js";
 
 export type { AnalysisStream, StreamPreset };
 

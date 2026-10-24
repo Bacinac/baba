@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { i18n, type Locale } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { auth } from "$lib/auth.svelte";
-  import { api } from "$lib/api";
+  import { i18n, type Locale } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { auth } from "#lib/auth.svelte.js";
+  import { api } from "#lib/api/index.js";
 
   const NEXT: Record<Locale, Locale> = { hr: "en", en: "hr" };
 

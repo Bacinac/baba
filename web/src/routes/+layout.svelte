@@ -3,13 +3,13 @@
   import { onMount } from "svelte";
   import { goto, beforeNavigate } from "$app/navigation";
   import { page } from "$app/state";
-  import { Dialogs, Frame, NewVersion, Toasts, i18n, theme, type Section } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { auth } from "$lib/auth.svelte";
-  import TopBar from "$lib/TopBar.svelte";
-  import Brand from "$lib/Brand.svelte";
-  import { version } from "$lib/version.svelte";
-  import { help } from "$lib/help";
+  import { Dialogs, Frame, NewVersion, Toasts, i18n, theme, type Section } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { auth } from "#lib/auth.svelte.js";
+  import TopBar from "#lib/TopBar.svelte";
+  import Brand from "#lib/Brand.svelte";
+  import { version } from "#lib/version.svelte.js";
+  import { help } from "#lib/help.js";
 
   let { children } = $props();
 
@@ -41,7 +41,7 @@
   $effect(() => {
     const path = page.url.pathname;
     if (auth.user === null && !path.startsWith("/login")) {
-      goto("/login", { replaceState: true });
+      goto("/login", { replace: true });
     }
   });
 
@@ -88,7 +88,7 @@
 
   async function logout() {
     await auth.logout();
-    goto("/login", { replaceState: true });
+    goto("/login", { replace: true });
   }
 </script>
 

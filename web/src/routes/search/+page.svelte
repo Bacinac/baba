@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
-  import { formatNumber, ApiError, Button, Card, Tag } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { byLabel } from "#lib/order.js";
+  import { formatNumber, ApiError, Button, Card, Tag } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount, onDestroy } from "svelte";
   import {
     api,
@@ -9,9 +9,9 @@
     type Camera,
     type SearchHit,
     type SearchResult,
-  } from "$lib/api";
-  import { CLASS_GROUPS } from "$lib/classGroups";
-  import { dt } from "$lib/datetime.svelte";
+  } from "#lib/api/index.js";
+  import { CLASS_GROUPS } from "#lib/classGroups.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   // --- query state ---
 
@@ -34,7 +34,7 @@
   // and the backend stays class-id-agnostic (the filter is collapsed
   // to a single class_id at send time by picking the first of the
   // group; broader filtering is post-hoc in the UI).
-  // CLASS_GROUPS (with COCO ids) shared with events — see $lib/classGroups.
+  // CLASS_GROUPS (with COCO ids) shared with events — see #lib/classGroups.js.
 
   onMount(async () => {
     try {

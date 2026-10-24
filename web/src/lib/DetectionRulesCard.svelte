@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
-  import { formatNumber, Button, Card, Toggle } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { byLabel } from "#lib/order.js";
+  import { formatNumber, Button, Card, Toggle } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount } from "svelte";
   import {
     api,
     type DetectionClass,
     type GlobalDetectionRule,
-  } from "$lib/api";
-  import { classLabel } from "$lib/classLabels";
+  } from "#lib/api/index.js";
+  import { classLabel } from "#lib/classLabels.js";
 
   let classes = $state<DetectionClass[]>([]);
   let rules = $state<GlobalDetectionRule[]>([]);

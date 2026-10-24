@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { formatNumber } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { formatNumber } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount, onDestroy } from "svelte";
-  import { api, type Camera, type LiveStatus, type ParkedVehicle } from "$lib/api";
-  import { liveOverlay } from "$lib/liveOverlay.svelte";
-  import LiveTile from "$lib/LiveTile.svelte";
+  import { api, type Camera, type LiveStatus, type ParkedVehicle } from "#lib/api/index.js";
+  import { liveOverlay } from "#lib/liveOverlay.svelte.js";
+  import LiveTile from "#lib/LiveTile.svelte";
 
   let cameras = $state<Camera[]>([]);
   let loading = $state(true);

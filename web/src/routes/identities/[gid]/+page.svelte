@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
+  import { byLabel } from "#lib/order.js";
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
   import { goto } from "$app/navigation";
@@ -10,13 +10,13 @@
     type IdentityLabelIn, type IdentityReferencePhoto, type IdentitySummary,
     type OpusPerson, type ImmichPerson, type ReferenceSources,
     type Feed,
-  } from "$lib/api";
-  import OpusPeoplePicker from "$lib/OpusPeoplePicker.svelte";
-  import { dialog, formatNumber, Button, Picks, Card, Tag, SaveButton } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { formatUptime } from "$lib/format";
-  import { dt } from "$lib/datetime.svelte";
-  import { classLabel } from "$lib/classLabels";
+  } from "#lib/api/index.js";
+  import OpusPeoplePicker from "#lib/OpusPeoplePicker.svelte";
+  import { dialog, formatNumber, Button, Picks, Card, Tag, SaveButton } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { formatUptime } from "#lib/format.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import { classLabel } from "#lib/classLabels.js";
 
   let gid = $derived(page.params.gid as string);
   let detail = $state<IdentityDetail | null>(null);

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { theme, type Theme } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { auth } from "$lib/auth.svelte";
-  import { api } from "$lib/api";
+  import { theme, type Theme } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { auth } from "#lib/auth.svelte.js";
+  import { api } from "#lib/api/index.js";
 
   // light → dark → system → light → …
   const NEXT: Record<Theme, Theme> = {

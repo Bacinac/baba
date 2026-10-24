@@ -1,15 +1,15 @@
 <script lang="ts">
   import { goto } from "$app/navigation";
-  import { dialog, Button, Tabs, Card, Tag, SaveButton } from "$lib/kit";
+  import { dialog, Button, Tabs, Card, Tag, SaveButton } from "#lib/kit/index.js";
   import { page } from "$app/state";
   import { onDestroy, onMount } from "svelte";
-  import { api, type Camera, type CameraPatch, type TrackingDefaults } from "$lib/api";
-  import { t, type MessageKey } from "$lib/i18n";
-  import StreamUrlField from "$lib/StreamUrlField.svelte";
-  import LiveStream from "$lib/LiveStream.svelte";
-  import CameraDetectionRulesCard from "$lib/CameraDetectionRulesCard.svelte";
-  import ZoneEditor from "$lib/ZoneEditor.svelte";
-  import SceneStates from "$lib/SceneStates.svelte";
+  import { api, type Camera, type CameraPatch, type TrackingDefaults } from "#lib/api/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import StreamUrlField from "#lib/StreamUrlField.svelte";
+  import LiveStream from "#lib/LiveStream.svelte";
+  import CameraDetectionRulesCard from "#lib/CameraDetectionRulesCard.svelte";
+  import ZoneEditor from "#lib/ZoneEditor.svelte";
+  import SceneStates from "#lib/SceneStates.svelte";
 
   let id = $derived(page.params.id as string);
 
@@ -27,10 +27,10 @@
   function setTab(t: CameraTab) {
     activeTab = t;
     // Keep the URL in sync so the tab survives reload / bookmark / back.
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     if (t === "camera") url.searchParams.delete("tab");
     else url.searchParams.set("tab", t);
-    goto(url, { replaceState: true, keepFocus: true, noScroll: true });
+    goto(url, { replace: true, reset: false });
   }
 
   let cam = $state<Camera | null>(null);
@@ -175,7 +175,7 @@
     try {
       await api.deleteCamera(target.id);
       if (!target.current()) return;
-      goto("/settings/cameras", { replaceState: true });
+      goto("/settings/cameras", { replace: true });
     } catch (err) {
       if (!target.current()) return;
       await dialog.alert({

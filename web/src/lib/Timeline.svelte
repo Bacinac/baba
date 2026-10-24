@@ -7,12 +7,12 @@
   // playhead-centered 10-min detail strip gives smooth fine scrubbing even
   // when the overview window is wide.
 
-  import type { BabaEvent, Camera, Recording } from "$lib/api";
-  import { t } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
+  import type { BabaEvent, Camera, Recording } from "#lib/api/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
   // Shared neon palette — a class reads as the same hue here as on the
   // live/zone-editor detection overlays.
-  import { classColor as colorForClass } from "$lib/detectionColors";
+  import { classColor as colorForClass } from "#lib/detectionColors.js";
 
   type Props = {
     // Time window the overview spans, in absolute ms. Any window works

@@ -8,7 +8,7 @@
   // a detection-overlay canvas) and `bindVideo` to capture the <video> element.
 
   import { onDestroy } from "svelte";
-  import { connectLive, type LiveHandle, type LiveState } from "$lib/live";
+  import { connectLive, type LiveHandle, type LiveState } from "#lib/live.js";
 
   let {
     slug,

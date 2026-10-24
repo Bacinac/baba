@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { AiProviderCard, type AiRole } from "$lib/kit";
-  import { api, type AiSettings } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { AiProviderCard, type AiRole } from "#lib/kit/index.js";
+  import { api, type AiSettings } from "#lib/api/index.js";
+  import { t } from "#lib/i18n/index.js";
 
   const roles: AiRole[] = [{ key: "image", label: t("ai_model") }];
 

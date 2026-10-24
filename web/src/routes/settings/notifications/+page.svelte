@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
+  import { byLabel } from "#lib/order.js";
   import { onMount } from "svelte";
-  import { dialog, Button, Tag, Toggle } from "$lib/kit";
+  import { dialog, Button, Tag, Toggle } from "#lib/kit/index.js";
   import {
     api,
     type Camera,
@@ -9,9 +9,9 @@
     type NotificationChannel,
     type NotificationKind,
     type NotificationRule,
-  } from "$lib/api";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
+  } from "#lib/api/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   let channels = $state<NotificationChannel[]>([]);
   let rules = $state<NotificationRule[]>([]);

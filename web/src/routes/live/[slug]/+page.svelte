@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { formatNumber, plural } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { formatNumber, plural } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onDestroy, onMount } from "svelte";
   import { page } from "$app/state";
   import {
@@ -12,8 +12,8 @@
     type TracksMessage,
     type Zone,
     type Feed,
-  } from "$lib/api";
-  import LiveStream from "$lib/LiveStream.svelte";
+  } from "#lib/api/index.js";
+  import LiveStream from "#lib/LiveStream.svelte";
 
   let slug = $derived(page.params.slug as string);
   let camera = $state<Camera | null>(null);
@@ -50,7 +50,7 @@
   let es: Feed | null = null;
   let esTracks: Feed | null = null;
 
-  import { classColor, MOTION_COLORS, motionStateLabel } from "$lib/detectionColors";
+  import { classColor, MOTION_COLORS, motionStateLabel } from "#lib/detectionColors.js";
   import {
     DEAD_END_ALPHA,
     DEAD_END_COLOR,
@@ -60,8 +60,8 @@
     deadEnd,
     deadEndLabel,
     maintainLabel,
-  } from "$lib/detectionState";
-  import { liveOverlay } from "$lib/liveOverlay.svelte";
+  } from "#lib/detectionState.js";
+  import { liveOverlay } from "#lib/liveOverlay.svelte.js";
 
   function draw() {
     if (!canvas || !videoBox || !videoEl || !lastMessage) return;

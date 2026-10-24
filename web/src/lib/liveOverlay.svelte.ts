@@ -3,7 +3,7 @@
 // them. One fetch on first use; the Settings card writes through `save()` so
 // open live views react without a reload.
 
-import { api, type LiveOverlay } from "$lib/api";
+import { api, type LiveOverlay } from "#lib/api/index.js";
 
 class LiveOverlayStore {
   boxes = $state(true);

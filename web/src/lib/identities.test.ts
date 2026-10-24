@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { IdentitySummary } from "$lib/api";
+import type { IdentitySummary } from "#lib/api/index.js";
 import { identitySections, sectionOf } from "./identities";
 
 function named(name: string, kind: string | null, opts: { affiliation?: string; resident?: boolean; class_name?: string } = {}): IdentitySummary {

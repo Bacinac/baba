@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { Tag } from "$lib/kit";
+  import { Tag } from "#lib/kit/index.js";
   import { onMount } from "svelte";
-  import { api } from "$lib/api";
-  import { t, type MessageKey } from "$lib/i18n";
+  import { api } from "#lib/api/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
   // Each card represents one onboarding step + how we know it's done.
   // Done = a single derived boolean per card, recomputed when the
   // underlying data loads. We deliberately don't persist a separate

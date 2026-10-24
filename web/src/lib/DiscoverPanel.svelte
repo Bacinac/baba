@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { formatNumber, Button, Card, Tag } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { api, type Camera, type DiscoveredCamera, type DiscoverResult, type ProbeResult, type StreamCandidate } from "$lib/api";
+  import { formatNumber, Button, Card, Tag } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { api, type Camera, type DiscoveredCamera, type DiscoverResult, type ProbeResult, type StreamCandidate } from "#lib/api/index.js";
 
   type Props = {
     onCameraAdded: () => void;

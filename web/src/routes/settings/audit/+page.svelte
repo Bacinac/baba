@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
-  import { api, type AuditEntry, type AuditFacets } from "$lib/api";
-  import { plural, Tag, type TagTone, Button, Dialog, Card } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
-  import { auth } from "$lib/auth.svelte";
+  import { byLabel } from "#lib/order.js";
+  import { api, type AuditEntry, type AuditFacets } from "#lib/api/index.js";
+  import { plural, Tag, type TagTone, Button, Dialog, Card } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import { auth } from "#lib/auth.svelte.js";
 
   let entries = $state<AuditEntry[]>([]);
   let loading = $state(true);

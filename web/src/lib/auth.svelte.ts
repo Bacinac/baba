@@ -1,10 +1,10 @@
 // Auth state: reactive `user` + login/logout. Backed by the API's session
 // cookie which the browser includes automatically once set.
 
-import { dt } from "$lib/datetime.svelte";
-import { i18n, theme, type Locale, type Theme } from "$lib/kit";
-import { playback } from "$lib/playback.svelte";
-import { request, type UserPreferences } from "$lib/api";
+import { dt } from "#lib/datetime.svelte.js";
+import { i18n, theme, type Locale, type Theme } from "#lib/kit/index.js";
+import { playback } from "#lib/playback.svelte.js";
+import { request, type UserPreferences } from "#lib/api/index.js";
 
 export interface AuthUser {
   id: string;

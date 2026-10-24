@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { Card } from "$lib/kit";
+  import { Card } from "#lib/kit/index.js";
   // Global tracking defaults (app_settings.tracking_defaults) — the base
   // layer every camera inherits unless it carries a per-camera override.
   // Sliders save the WHOLE object on release (PUT), same as the telemetry
   // settings switch; the tracker hot-reloads via app_settings_changed.
   import { onMount } from "svelte";
-  import { api, type TrackingDefaults } from "$lib/api";
-  import { t, type MessageKey } from "$lib/i18n";
+  import { api, type TrackingDefaults } from "#lib/api/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
   let defaults = $state<TrackingDefaults | null>(null);
   let drag = $state<Partial<TrackingDefaults>>({});
   let saving = $state(false);

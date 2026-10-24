@@ -6,10 +6,10 @@
     type Camera,
     type Sighting,
     type Stats as SystemStats,
-  } from "$lib/api";
-  import { formatBytes, formatNumber, Stats } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { dt } from "$lib/datetime.svelte";
+  } from "#lib/api/index.js";
+  import { formatBytes, formatNumber, Stats } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   // --- state ---
 

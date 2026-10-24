@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Card, Tag, SaveButton } from "$lib/kit";
+  import { Card, Tag, SaveButton } from "#lib/kit/index.js";
   // Immich connection panel. Lives on the face-recognition settings page
   // because that's what the import feeds: Immich photos are enrolled as FACE
   // references only (the body vector of a head-and-shoulders crop is
@@ -20,8 +20,8 @@
   // fails loudly rather than breaking the connection — but the operator is
   // still being offered an action that can only go wrong).
 
-  import { api, type ImmichStatus } from "$lib/api";
-  import { t } from "$lib/i18n";
+  import { api, type ImmichStatus } from "#lib/api/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount } from "svelte";
 
   let status = $state<ImmichStatus | null>(null);

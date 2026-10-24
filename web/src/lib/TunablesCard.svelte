@@ -10,9 +10,9 @@
   // redeployed. They are the values that decide what BABA sees, so they were
   // exactly the settings the operator could not reach.
   import { onMount } from "svelte";
-  import { api, type Tunable } from "$lib/api";
-  import { Button, Card, formatNumber, Notice, toasts, SaveButton } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
+  import { api, type Tunable } from "#lib/api/index.js";
+  import { Button, Card, formatNumber, Notice, toasts, SaveButton } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
 
   let rows = $state<Tunable[]>([]);
   let edited = $state<Record<string, string>>({});

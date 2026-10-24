@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Tag } from "$lib/kit";
+  import { Tag } from "#lib/kit/index.js";
   // One grid tile: a still frame the browser re-asks for every second.
   //
   // This is deliberately NOT a stream. An <img> fed Motion-JPEG keeps whatever
@@ -15,10 +15,10 @@
   //
   // Each frame is preloaded off-DOM and swapped in only once decoded, so the
   // visible image never blanks between refreshes.
-  import { t } from "$lib/i18n";
-  import { formatUptime } from "$lib/format";
-  import { dt } from "$lib/datetime.svelte";
-  import type { ParkedVehicle } from "$lib/api/types";
+  import { t } from "#lib/i18n/index.js";
+  import { formatUptime } from "#lib/format.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import type { ParkedVehicle } from "#lib/api/types.js";
 
   let {
     cameraId,

@@ -7,15 +7,15 @@
     type SystemMetrics,
     type ServiceMetrics,
     type ServiceTiming,
-  } from "$lib/api";
-  import { formatNumber } from "$lib/kit";
-  import { t } from "$lib/i18n";
-  import { formatMetric, formatUptime } from "$lib/format";
+  } from "#lib/api/index.js";
+  import { formatNumber } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
+  import { formatMetric, formatUptime } from "#lib/format.js";
   // A service that is genuinely broken keeps erroring, so the line stays.
   // One error an hour ago is history, and a card left permanently red is
   // wallpaper — the panel has to mean something when it is red.
   const ERROR_SHELF_LIFE_S = 3600;
-  import TelemetryIncidents from "$lib/TelemetryIncidents.svelte";
+  import TelemetryIncidents from "#lib/TelemetryIncidents.svelte";
 
   let info = $state<SystemInfo | null>(null);
   let stats = $state<Stats | null>(null);

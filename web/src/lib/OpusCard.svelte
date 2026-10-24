@@ -14,9 +14,9 @@
   // `autocomplete="off"`; `new-password` stops that, and `tokenEdited` only
   // flips on a keystroke, so an autofill that races the mount cannot pass.
 
-  import { api, type OpusStatus } from "$lib/api";
-  import { formatNumber, Card, Tag, SaveButton } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { api, type OpusStatus } from "#lib/api/index.js";
+  import { formatNumber, Card, Tag, SaveButton } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount } from "svelte";
 
   let status = $state<OpusStatus | null>(null);

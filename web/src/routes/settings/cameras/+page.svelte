@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { formatNumber, Button, Card, Toggle } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { formatNumber, Button, Card, Toggle } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount, onDestroy } from "svelte";
   import { goto } from "$app/navigation";
-  import { api, type Camera, type CameraIn, type LiveStatus } from "$lib/api";
-  import StreamUrlField from "$lib/StreamUrlField.svelte";
-  import DiscoverPanel from "$lib/DiscoverPanel.svelte";
-  import LiveStream from "$lib/LiveStream.svelte";
-  import { liveOverlay } from "$lib/liveOverlay.svelte";
+  import { api, type Camera, type CameraIn, type LiveStatus } from "#lib/api/index.js";
+  import StreamUrlField from "#lib/StreamUrlField.svelte";
+  import DiscoverPanel from "#lib/DiscoverPanel.svelte";
+  import LiveStream from "#lib/LiveStream.svelte";
+  import { liveOverlay } from "#lib/liveOverlay.svelte.js";
 
   let overlaySaving = $state(false);
   async function saveOverlay(patch: { boxes?: boolean; badges?: boolean }) {

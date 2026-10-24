@@ -1,4 +1,4 @@
-import type { Handle } from "@sveltejs/kit";
+import type { Handle } from "@sveltejs/kit/hooks";
 
 // The SSR document must never be cached: it names the hashed chunks of one
 // build, and a heuristically-cached copy keeps a long-lived window on a stale

@@ -6,7 +6,7 @@
 // The activity/sightings feed keeps its own narrower "pet"-style grouping on
 // purpose (different context + i18n keys), so it is intentionally NOT sourced
 // from here.
-import type { MessageKey } from "$lib/i18n";
+import type { MessageKey } from "#lib/i18n/index.js";
 
 export type ClassGroup = {
   id: string;

@@ -1,5 +1,5 @@
-import type { IdentitySummary } from "$lib/api";
-import { compareHr } from "$lib/kit";
+import type { IdentitySummary } from "#lib/api/index.js";
+import { compareHr } from "#lib/kit/index.js";
 
 export const IDENTITY_SECTIONS = ["person", "vehicle", "pet", "other"] as const;
 export type IdentitySection = (typeof IDENTITY_SECTIONS)[number];

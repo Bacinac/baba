@@ -16,8 +16,8 @@
 // in the browser is the ignore-zone polygon, and that uses the tracker's
 // anchor — the bbox BOTTOM-CENTRE, a subject's foot position — so a polygon
 // drawn once behaves the same here as it does in the tracker.
-import { t } from "$lib/i18n";
-import type { Zone } from "$lib/api";
+import { t } from "#lib/i18n/index.js";
+import type { Zone } from "#lib/api/index.js";
 
 export type DeadEnd =
   | { kind: "phantom"; births: number; spanH: number }

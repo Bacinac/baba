@@ -1,15 +1,15 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
-  import { formatNumber, Button, Card, SaveButton } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { byLabel } from "#lib/order.js";
+  import { formatNumber, Button, Card, SaveButton } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import {
     api,
     type Zone,
     type ZoneClassRule,
     type ZoneRules,
-  } from "$lib/api";
+  } from "#lib/api/index.js";
   import { untrack } from "svelte";
-  import { classLabel } from "$lib/classLabels";
+  import { classLabel } from "#lib/classLabels.js";
 
   type Props = {
     zone: Zone;

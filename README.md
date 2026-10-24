@@ -95,7 +95,7 @@ in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 RT-DETRv2 and D-FINE for detection, Norfair with OSNet appearance for tracking
 and photo search, YuNet and AuraFace for faces, DINOv2 for scene states, SAM2
-for zones. FastAPI, NATS, Postgres 18 with pgvector, SvelteKit 2 and Svelte 5,
+for zones. FastAPI, NATS, Postgres 18 with pgvector, SvelteKit 3 and Svelte 5,
 go2rtc for live view. TensorRT on NVIDIA, OpenVINO on Intel, ONNX Runtime on the
 CPU. Everything runs in containers.
 

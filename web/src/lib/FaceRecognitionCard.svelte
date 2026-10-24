@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { formatNumber, Button, Card, Notice, Tag, type TagTone, SaveButton } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { formatNumber, Button, Card, Notice, Tag, type TagTone, SaveButton } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onDestroy, onMount } from "svelte";
   import {
     api,
@@ -8,8 +8,8 @@
     type FaceDetector,
     type FaceRecognitionSettings,
     type FaceRecomputeStatus,
-  } from "$lib/api";
-  import { dt } from "$lib/datetime.svelte";
+  } from "#lib/api/index.js";
+  import { dt } from "#lib/datetime.svelte.js";
 
   let models = $state<FaceModel[]>([]);
   let detectors = $state<FaceDetector[]>([]);

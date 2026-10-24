@@ -7,8 +7,8 @@
 // Before hydration it falls back to browser defaults, which is what every
 // page would do anyway, so nothing breaks.
 
-import { i18n } from "$lib/kit";
-import type { UserPreferences } from "$lib/api";
+import { i18n } from "#lib/kit/index.js";
+import type { UserPreferences } from "#lib/api/index.js";
 
 type When = Date | number | string | null | undefined;
 

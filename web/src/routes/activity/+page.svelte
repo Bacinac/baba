@@ -1,18 +1,18 @@
 <script lang="ts">
-  import { byLabel } from "$lib/order";
+  import { byLabel } from "#lib/order.js";
   import { onMount } from "svelte";
   import { api, cameraClipUrl, thumbnailUrl, eventsFeed,
     type BabaEvent, type Camera, type Recording, type Sighting,
     type SuppressedTrack,
     type Feed,
-  } from "$lib/api";
+  } from "#lib/api/index.js";
   import { page } from "$app/state";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { Hint, Picks, Toggle, Tag, formatNumber } from "$lib/kit";
-  import { formatDuration } from "$lib/format";
-  import { dt } from "$lib/datetime.svelte";
-  import { playback } from "$lib/playback.svelte";
-  import Timeline from "$lib/Timeline.svelte";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { Hint, Picks, Toggle, Tag, formatNumber } from "#lib/kit/index.js";
+  import { formatDuration } from "#lib/format.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import { playback } from "#lib/playback.svelte.js";
+  import Timeline from "#lib/Timeline.svelte";
 
   // Deep link from Home's recent-sighting click (/activity?cam&t). Parsed at
   // INIT via page (SSR-safe, same pattern as settings/cameras ?tab) so the

@@ -7,9 +7,9 @@
   // the library's face is the link, and a second identity for the same person
   // is the over-merge problem in reverse.
 
-  import { api, type OpusPerson } from "$lib/api";
-  import { formatNumber, Button, Tag } from "$lib/kit";
-  import { t } from "$lib/i18n";
+  import { api, type OpusPerson } from "#lib/api/index.js";
+  import { formatNumber, Button, Tag } from "#lib/kit/index.js";
+  import { t } from "#lib/i18n/index.js";
   import { onMount } from "svelte";
 
   let {

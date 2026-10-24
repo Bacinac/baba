@@ -11,7 +11,7 @@
 // Kept apart from `lib/i18n/` on purpose: that catalogue is UI copy, this
 // is a fixed vocabulary that comes from the model, not from us. The English
 // side needs no table — the COCO token IS the English label.
-import { i18n } from "$lib/kit";
+import { i18n } from "#lib/kit/index.js";
 const HR: Record<string, string> = {
   person: "osoba",
   bicycle: "bicikl",

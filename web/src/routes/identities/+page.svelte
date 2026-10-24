@@ -4,13 +4,13 @@
   import { api, identitiesFeed, thumbnailUrl,
     type IdentitiesFilter, type IdentitySummary, type OpusPerson, type ReferenceSources,
     type Feed,
-  } from "$lib/api";
-  import OpusPeoplePicker from "$lib/OpusPeoplePicker.svelte";
-  import { dialog, plural, Button, Dialog, Heading, Picks, Tag, PageActions } from "$lib/kit";
-  import { t, type MessageKey } from "$lib/i18n";
-  import { identitySections, sectionOfClass, type IdentitySection } from "$lib/identities";
-  import { dt } from "$lib/datetime.svelte";
-  import { classLabel } from "$lib/classLabels";
+  } from "#lib/api/index.js";
+  import OpusPeoplePicker from "#lib/OpusPeoplePicker.svelte";
+  import { dialog, plural, Button, Dialog, Heading, Picks, Tag, PageActions } from "#lib/kit/index.js";
+  import { t, type MessageKey } from "#lib/i18n/index.js";
+  import { identitySections, sectionOfClass, type IdentitySection } from "#lib/identities.js";
+  import { dt } from "#lib/datetime.svelte.js";
+  import { classLabel } from "#lib/classLabels.js";
 
   // Filter chips. `class_id` matches the canonical id of each group;
   // backend expands to the full re-ID class group (e.g. clicking
