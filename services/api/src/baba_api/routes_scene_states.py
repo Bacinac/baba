@@ -275,14 +275,30 @@ async def patch_scene_region(
             set_clauses.append(f"{k} = ${i}")
             args.append(v)
     args.append(region_id)
-    row = await pool.fetchrow(
-        f"UPDATE scene_regions SET {', '.join(set_clauses)} "  # noqa: S608
-        f"WHERE id = ${len(args)} RETURNING {_REGION_FIELDS}",
-        *args,
-    )
-    if row is None:
-        raise HTTPException(404, "scene region not found")
+    async with pool.acquire() as conn, conn.transaction():
+        # A reference embeds the crop it was cut from. Scored against a redrawn
+        # polygon it describes no state, only what the two crops share.
+        dropped = []
+        if "polygon" in fields:
+            dropped = await conn.fetch(
+                "DELETE FROM scene_region_prototypes p USING scene_regions r "
+                "WHERE r.id = $1 AND p.region_id = r.id "
+                "AND r.polygon IS DISTINCT FROM $2::jsonb RETURNING p.crop_path",
+                region_id,
+                json.dumps(fields["polygon"]),
+            )
+        row = await conn.fetchrow(
+            f"UPDATE scene_regions SET {', '.join(set_clauses)} "  # noqa: S608
+            f"WHERE id = ${len(args)} RETURNING {_REGION_FIELDS}",
+            *args,
+        )
+        if row is None:
+            raise HTTPException(404, "scene region not found")
+    for c in dropped:
+        _unlink_crop(request, c["crop_path"])
     audit_payload = {k: (len(v) if k == "polygon" else v) for k, v in fields.items()}
+    if dropped:
+        audit_payload["prototypes_dropped"] = len(dropped)
     audit_payload["region_name"] = row["name"]
     audit_payload["camera_id"] = str(row["camera_id"])
     await write_audit(
