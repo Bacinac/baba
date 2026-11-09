@@ -69,7 +69,6 @@ web/brand/
 .gitignore
 *.md
 !CLAUDE.md
-ROADMAP.md
 ARCHITECTURE.md
 LICENSES.md
 README.md

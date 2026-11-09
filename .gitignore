@@ -92,7 +92,6 @@ demo/media/
 /AGENTS.md
 /CODE_REVIEW_*.md
 /APP_REVIEW_*.md
-/ROADMAP.md
 /research/
 
 # Deployment inventory of the live installations; deploy/hosts.conf.example is the template.
