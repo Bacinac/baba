@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 NAME="baba-storage-test-$$"
-FIXTURE="$(mktemp -d /tmp/baba-storage-test.XXXXXX)"
+FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/baba-storage-test.XXXXXX")"
 IMAGE="${BABA_STORAGE_TEST_IMAGE:-ghcr.io/bacinac/baba/recorder:cpu}"
 PG_IMAGE="${BABA_TEST_PG_IMAGE:-postgres:18}"
 cleanup() {
